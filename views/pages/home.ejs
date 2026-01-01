@@ -1,0 +1,37 @@
+<div class="max-w-7xl mx-auto px-6 py-10">
+  <% if (hero) { %>
+    <section class="pan-hero border border-white/10 rounded-3xl overflow-hidden">
+      <div class="pan-heroMedia">
+        <img src="<%= hero.bookCover %>" alt="<%= hero.bookName %>" class="pan-heroImg" loading="lazy"/>
+        <div class="pan-heroShade"></div>
+      </div>
+      <div class="pan-heroBody">
+        <div class="tracking-[0.45em] uppercase text-xs opacity-70" data-aos="fade-down">Featured</div>
+        <h1 class="mt-4 text-3xl md:text-5xl font-semibold leading-tight" data-aos="fade-up">
+          <%= hero.bookName %>
+        </h1>
+        <p class="mt-4 max-w-2xl opacity-70 leading-relaxed" data-aos="fade-up" data-aos-delay="120">
+          <%= (hero.introduction || "").slice(0, 220) %><%= (hero.introduction||"").length>220 ? "…" : "" %>
+        </p>
+
+        <div class="mt-6 flex items-center gap-3" data-aos="fade-up" data-aos-delay="200">
+          <a class="pan-btnPrimary" href="/detail/<%= hero.bookId %>"><i class="ri-information-line"></i> Open Detail</a>
+          <a class="pan-btn" href="/browse?classify=terbaru"><i class="ri-compass-3-line"></i> Explore</a>
+        </div>
+
+        <div class="mt-6 flex flex-wrap gap-2" data-aos="fade-up" data-aos-delay="260">
+          <% (hero.tags || []).slice(0,6).forEach(t => { %>
+            <span class="pan-chip"><%= t %></span>
+          <% }) %>
+        </div>
+      </div>
+    </section>
+  <% } %>
+
+  <%- include("../components/rail.ejs", { title:"VIP", items: sections.vip || [] }) %>
+  <%- include("../components/rail.ejs", { title:"Dub Indo Terbaru", items: sections.dubindo || [], cta: { href:"/browse?classify=terbaru", label:"Browse" } }) %>
+  <%- include("../components/rail.ejs", { title:"For You", items: sections.foryou || [] }) %>
+  <%- include("../components/rail.ejs", { title:"Latest", items: sections.latest || [] }) %>
+  <%- include("../components/rail.ejs", { title:"Trending", items: sections.trending || [] }) %>
+  <%- include("../components/rail.ejs", { title:"Random Picks", items: sections.random || [] }) %>
+</div>
