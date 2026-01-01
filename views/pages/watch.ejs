@@ -1,0 +1,144 @@
+<div class="max-w-7xl mx-auto px-6 py-8">
+  <div class="flex items-center justify-between">
+    <div>
+      <div class="tracking-[0.45em] uppercase text-xs opacity-60">Now Playing</div>
+      <h1 class="mt-2 text-xl md:text-3xl font-semibold"><%= detail.bookName %></h1>
+      <div class="mt-2 text-sm opacity-60">
+        Episode <%= (player.currentIndex + 1) %> / <%= episodes.length %>
+      </div>
+    </div>
+    <a class="pan-btn" href="/detail/<%= detail.bookId %>"><i class="ri-arrow-left-line"></i> Back</a>
+  </div>
+
+  <section class="mt-8 pan-playerShell" data-aos="zoom-out">
+    <div id="panPlayerRoot"
+      class="pan-playerRoot"
+      data-video="<%= player.videoPath %>"
+      data-book="<%= player.bookId %>"
+      data-chapter="<%= player.chapterId %>"
+      data-index="<%= player.currentIndex %>"
+      data-total="<%= episodes.length %>"
+      data-cover="<%= detail.bookCover %>"
+      data-title="<%= detail.bookName %>"
+    >
+      <video id="panVideo" class="pan-video" preload="metadata" playsinline></video>
+
+      <!-- Brightness overlay (gesture left swipe up/down) -->
+      <div id="panBright" class="pan-brightness"></div>
+
+      <!-- Loading HUD -->
+      <div class="pan-loadingHUD">
+        <div class="pan-spinner sm"></div>
+        <div class="pan-loadingLabel" data-label="Loading…"></div>
+      </div>
+
+      <!-- Watermark -->
+      <div class="pan-watermark"><span>PanStream</span></div>
+
+      <!-- Gesture toast -->
+      <div id="panToast" class="pan-toast"></div>
+
+      <div id="panOverlay" class="pan-overlay"></div>
+
+      <div id="panControls" class="pan-controls">
+        <div class="pan-controlsTop">
+          <div class="pan-title">
+            <div class="pan-dot"></div>
+            <div class="pan-titleText">
+              <div class="pan-titleMain"><%= detail.bookName %></div>
+              <div class="pan-titleSub">Episode <%= (player.currentIndex + 1) %></div>
+            </div>
+          </div>
+          <div class="pan-actions">
+            <button class="pan-ctl" data-action="theater"><i class="ri-layout-row-line"></i> Theater</button>
+            <button class="pan-ctl" data-action="pip"><i class="ri-picture-in-picture-2-line"></i> PiP</button>
+            <button class="pan-ctl" data-action="fs"><i class="ri-fullscreen-line"></i> Full</button>
+          </div>
+        </div>
+
+        <div class="pan-progressRow">
+          <input id="panSeek" type="range" min="0" max="1000" value="0" />
+        </div>
+
+        <div class="pan-controlsBottom">
+          <div class="pan-left">
+            <button class="pan-ctlIcon" data-action="play" aria-label="Play/Pause">
+              <i class="ri-play-fill" id="panPlayIcon"></i>
+            </button>
+
+            <button class="pan-ctlIcon" data-action="rew" aria-label="Rewind 10s">
+              <i class="ri-rewind-mini-fill"></i><span class="pan-ctlTiny">10</span>
+            </button>
+
+            <button class="pan-ctlIcon" data-action="fwd" aria-label="Forward 10s">
+              <i class="ri-speed-mini-fill"></i><span class="pan-ctlTiny">10</span>
+            </button>
+
+            <div class="pan-time" id="panTime">00:00 / 00:00</div>
+          </div>
+
+          <div class="pan-right">
+            <div class="pan-qualWrap">
+              <button class="pan-ctl" id="panQualBtn"><i class="ri-hd-line"></i> Quality</button>
+              <div class="pan-qualMenu" id="panQualMenu"></div>
+            </div>
+
+            <div class="pan-volWrap">
+              <button class="pan-ctlIcon" data-action="mute" aria-label="Mute/Unmute">
+                <i class="ri-volume-up-fill" id="panVolIcon"></i>
+              </button>
+              <input id="panVol" type="range" min="0" max="1" step="0.01" value="1"/>
+            </div>
+
+            <button class="pan-ctl" data-action="next"><i class="ri-skip-forward-line"></i> Next</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="panPoster" class="pan-posterLayer">
+        <img src="<%= detail.bookCover %>" alt="cover" />
+        <div class="pan-posterShade"></div>
+        <button class="pan-bigPlay" data-action="play"><i class="ri-play-large-fill"></i> Play</button>
+      </div>
+
+      <!-- Auto-next overlay -->
+      <div id="panNextOverlay" class="pan-nextOverlay">
+        <div class="pan-nextCard">
+          <div class="pan-spinner sm"></div>
+          <div class="pan-nextText">
+            <div class="pan-nextTitle">Up Next</div>
+            <div class="pan-nextMeta" id="panNextMeta">Loading next episode…</div>
+          </div>
+          <button class="pan-btnMini" id="panCancelNext">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="mt-10">
+    <div class="tracking-[0.35em] uppercase text-xs opacity-70" data-aos="fade-right">Episodes</div>
+    <div class="pan-rail mt-5">
+      <% episodes.forEach((ep, i) => { 
+        const active = String(ep.chapterId) === String(player.chapterId);
+      %>
+        <a href="/watch/<%= detail.bookId %>/<%= ep.chapterId %>"
+           class="pan-epCard <%= active ? 'pan-epActive' : '' %>"
+           data-aos="zoom-in"
+           data-aos-delay="<%= Math.min(220, i*18) %>">
+          <div class="text-xs opacity-60">EP <%= i+1 %></div>
+          <div class="text-sm mt-1 font-medium line-clamp-1"><%= ep.chapterName || ("Episode " + (i+1)) %></div>
+        </a>
+      <% }) %>
+    </div>
+  </section>
+</div>
+
+<script>
+  window.__PAN_EPISODES__ = <%- JSON.stringify(episodes.map((ep, i) => ({
+    i,
+    chapterId: String(ep.chapterId || ""),
+    videoPath: ep.videoPath || "",
+    href: `/watch/${detail.bookId}/${ep.chapterId}`
+  }))) %>;
+</script>
+<script src="/js/player.js"></script>
