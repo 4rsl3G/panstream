@@ -3,9 +3,6 @@
   "version": "1.0.0",
   "description": "PanStream – Luxury Drama Streaming SSR",
   "main": "app.js",
-  "engines": {
-    "node": "20.x"
-  },
   "scripts": {
     "start": "node server.js"
   },
