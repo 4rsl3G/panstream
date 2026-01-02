@@ -9,7 +9,7 @@ const compression = require("compression");
 const app = express();
 
 const PORT = process.env.PORT || 3000;
-const SITE_URL = process.env.SITE_URL || `http://localhost:${PORT}`;
+const SITE_URL = process.env.SITE_URL || `https://panstream-ten.vercel.app`;
 const API_BASE = process.env.API_BASE || "https://api.sansekai.my.id/api/dramabox";
 const CACHE_TTL = Number(process.env.CACHE_TTL_SECONDS || 180);
 
