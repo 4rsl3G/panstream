@@ -1,0 +1,13 @@
+<script type="application/ld+json">
+<%- JSON.stringify({
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  "name": "PanStream",
+  "url": meta?.url || "",
+  "potentialAction": {
+    "@type": "SearchAction",
+    "target": (meta?.url ? meta.url.replace(/\/$/, "") : "") + "/search?q={search_term_string}",
+    "query-input": "required name=search_term_string"
+  }
+}) %>
+</script>
