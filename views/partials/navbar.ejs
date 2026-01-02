@@ -1,0 +1,76 @@
+<header class="sticky top-0 z-40 backdrop-blur pan-header">
+  <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+    <a href="/" class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-xl border border-white/15 flex items-center justify-center pan-glow">
+        <span class="text-sm tracking-[0.25em]">PS</span>
+      </div>
+      <div>
+        <div class="text-sm tracking-[0.45em] uppercase leading-none">PanStream</div>
+        <div class="text-xs opacity-60 mt-1">Luxury streaming experience</div>
+      </div>
+    </a>
+
+    <div class="flex items-center gap-3" x-data="{open:false, q:'', loading:false, results:[] }">
+      <a href="/browse?classify=terbaru" class="pan-btn">
+        <i class="ri-compass-3-line"></i> Browse
+      </a>
+
+      <button class="pan-btn" @click="open=true; $nextTick(()=>document.getElementById('panSearch').focus())">
+        <i class="ri-search-line"></i> Search
+      </button>
+
+      <div x-show="open" x-transition.opacity class="fixed inset-0 z-50">
+        <div class="absolute inset-0 bg-black/80" @click="open=false"></div>
+
+        <div class="relative max-w-4xl mx-auto mt-16 px-6">
+          <div class="border border-white/15 rounded-2xl bg-black/90 p-6 pan-cardWide">
+            <div class="flex items-center justify-between">
+              <div class="tracking-[0.35em] uppercase text-xs opacity-70">Search PanStream</div>
+              <button class="pan-btn" @click="open=false"><i class="ri-close-line"></i> Close</button>
+            </div>
+
+            <div class="mt-4">
+              <input id="panSearch"
+                class="w-full pan-input"
+                placeholder="Cari judul drama…"
+                x-model="q"
+                @keydown.enter.prevent="
+                  loading=true;
+                  fetch('/api/search?q='+encodeURIComponent(q))
+                    .then(r=>r.json())
+                    .then(j=>{ results=j.data||[]; })
+                    .finally(()=>loading=false);
+                "
+              />
+              <div class="mt-3 text-xs opacity-60">Enter untuk mencari. Hasil tampil di bawah.</div>
+            </div>
+
+            <div class="mt-6">
+              <template x-if="loading">
+                <div class="opacity-70 flex items-center gap-2">
+                  <i class="ri-loader-4-line ri-spin"></i> Searching…
+                </div>
+              </template>
+
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <template x-for="it in results" :key="it.bookId">
+                  <a class="group block" :href="'/detail/'+it.bookId">
+                    <div class="aspect-[2/3] rounded-xl overflow-hidden border border-white/10">
+                      <img class="w-full h-full object-cover group-hover:scale-[1.04] transition-transform duration-500"
+                           loading="lazy" :src="it.bookCover" />
+                    </div>
+                    <div class="mt-2 text-sm opacity-90 line-clamp-2" x-text="it.bookName"></div>
+                  </a>
+                </template>
+              </div>
+
+              <template x-if="(!loading && results.length===0 && q.trim().length>0)">
+                <div class="opacity-60 mt-4">Tidak ada hasil.</div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
