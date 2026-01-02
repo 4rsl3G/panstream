@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "functions": {
+    "api/index.js": {
+      "runtime": "nodejs20.x",
+      "includeFiles": "views/**"
+    }
+  },
+  "routes": [
+    { "src": "/(css|js|images|fonts|favicon\\.ico|robots\\.txt|sitemap\\.xml)(.*)", "dest": "/public/$1$2" },
+    { "src": "/(.*)", "dest": "/api/index.js" }
+  ]
+}
