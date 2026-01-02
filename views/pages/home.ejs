@@ -1,37 +1,47 @@
-<div class="max-w-7xl mx-auto px-6 py-10">
-  <% if (hero) { %>
-    <section class="pan-hero border border-white/10 rounded-3xl overflow-hidden">
-      <div class="pan-heroMedia">
-        <img src="<%= hero.bookCover %>" alt="<%= hero.bookName %>" class="pan-heroImg" loading="lazy"/>
-        <div class="pan-heroShade"></div>
+<div class="max-w-7xl mx-auto px-4 sm:px-6 pt-10 pb-6">
+  <section class="pan-hero" data-aos="fade-up">
+    <% if (featured) { %>
+      <div class="pan-heroBg">
+        <img src="/img?u=<%= encodeURIComponent(featured.cover || '') %>" alt="" />
       </div>
-      <div class="pan-heroBody">
-        <div class="tracking-[0.45em] uppercase text-xs opacity-70" data-aos="fade-down">Featured</div>
-        <h1 class="mt-4 text-3xl md:text-5xl font-semibold leading-tight" data-aos="fade-up">
-          <%= hero.bookName %>
-        </h1>
-        <p class="mt-4 max-w-2xl opacity-70 leading-relaxed" data-aos="fade-up" data-aos-delay="120">
-          <%= (hero.introduction || "").slice(0, 220) %><%= (hero.introduction||"").length>220 ? "…" : "" %>
-        </p>
 
-        <div class="mt-6 flex items-center gap-3" data-aos="fade-up" data-aos-delay="200">
-          <a class="pan-btnPrimary" href="/detail/<%= hero.bookId %>"><i class="ri-information-line"></i> Open Detail</a>
-          <a class="pan-btn" href="/browse?classify=terbaru"><i class="ri-compass-3-line"></i> Explore</a>
+      <div class="pan-heroCard">
+        <div class="tracking-[0.45em] uppercase text-xs opacity-70">Featured</div>
+        <h1 class="pan-heroTitle mt-4"><%= featured.bookName %></h1>
+        <p class="pan-heroDesc mt-5"><%= (featured.introduction || '').slice(0, 210) %>...</p>
+
+        <div class="pan-heroActions mt-7">
+          <a class="pan-btn pan-btnPrimary" href="/detail/<%= featured.bookId %>">
+            <i class="ri-information-line"></i> Open Detail
+          </a>
+          <a class="pan-btn" href="/browse">
+            <i class="ri-compass-3-line"></i> Explore
+          </a>
         </div>
 
-        <div class="mt-6 flex flex-wrap gap-2" data-aos="fade-up" data-aos-delay="260">
-          <% (hero.tags || []).slice(0,6).forEach(t => { %>
-            <span class="pan-chip"><%= t %></span>
-          <% }) %>
+        <% if (featured.tags && featured.tags.length) { %>
+          <div class="pan-chipRow mt-7">
+            <% featured.tags.slice(0, 8).forEach(t => { %>
+              <span class="pan-chip"><%= t %></span>
+            <% }) %>
+          </div>
+        <% } %>
+      </div>
+    <% } else { %>
+      <div class="pan-heroCard">
+        <div class="tracking-[0.45em] uppercase text-xs opacity-70">PanStream</div>
+        <h1 class="pan-heroTitle mt-4">Luxury streaming interface</h1>
+        <p class="pan-heroDesc mt-5">API sedang tidak tersedia. Refresh halaman.</p>
+        <div class="pan-heroActions mt-7">
+          <a class="pan-btn pan-btnPrimary" href="/browse">Browse</a>
+          <a class="pan-btn" href="/search">Search</a>
         </div>
       </div>
-    </section>
-  <% } %>
+    <% } %>
+  </section>
 
-  <%- include("../components/rail.ejs", { title:"VIP", items: sections.vip || [] }) %>
-  <%- include("../components/rail.ejs", { title:"Dub Indo Terbaru", items: sections.dubindo || [], cta: { href:"/browse?classify=terbaru", label:"Browse" } }) %>
-  <%- include("../components/rail.ejs", { title:"For You", items: sections.foryou || [] }) %>
-  <%- include("../components/rail.ejs", { title:"Latest", items: sections.latest || [] }) %>
-  <%- include("../components/rail.ejs", { title:"Trending", items: sections.trending || [] }) %>
-  <%- include("../components/rail.ejs", { title:"Random Picks", items: sections.random || [] }) %>
+  <%- include("../components/rail", { title: "Trending", items: trending, cta: { href: "/browse?classify=terbaru&page=1", label: "More" } }) %>
+  <%- include("../components/rail", { title: "Latest", items: latest, cta: { href: "/browse?classify=terbaru&page=1", label: "More" } }) %>
+  <%- include("../components/rail", { title: "For You", items: foryou }) %>
+  <%- include("../components/rail", { title: "Random", items: random }) %>
 </div>
