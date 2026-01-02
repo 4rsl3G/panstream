@@ -1,25 +1,48 @@
+<%
+  const safeItems = Array.isArray(items) ? items : [];
+  const hasCTA = (typeof cta !== "undefined" && cta && cta.href && cta.label);
+%>
+
 <section class="mt-12">
   <div class="flex items-end justify-between">
-    <h2 class="text-xl md:text-2xl tracking-[0.25em] uppercase opacity-90" data-aos="fade-right"><%= title %></h2>
-    <% if (cta) { %>
-      <a href="<%= cta.href %>" class="text-xs tracking-[0.35em] uppercase opacity-60 hover:opacity-90 transition" data-aos="fade-left">
+    <h2 class="text-xl md:text-2xl tracking-[0.25em] uppercase opacity-90" data-aos="fade-right">
+      <%= title %>
+    </h2>
+
+    <% if (hasCTA) { %>
+      <a href="<%= cta.href %>"
+         class="text-xs tracking-[0.35em] uppercase opacity-60 hover:opacity-90 transition"
+         data-aos="fade-left">
         <%= cta.label %> <i class="ri-arrow-right-line"></i>
       </a>
     <% } %>
   </div>
 
   <div class="pan-rail mt-6" data-rail>
-    <% items.forEach((d, idx) => { %>
-      <a href="/detail/<%= d.bookId %>" class="pan-card group" data-aos="zoom-in" data-aos-delay="<%= Math.min(220, idx*35) %>">
-        <div class="pan-poster">
-          <img loading="lazy" src="<%= d.bookCover %>" alt="<%= d.bookName %>" class="pan-img" />
-          <div class="pan-posterOverlay"></div>
-        </div>
-        <div class="mt-3">
-          <div class="text-sm opacity-90 line-clamp-2"><%= d.bookName %></div>
-          <div class="text-xs opacity-60 mt-1"><%= d.playCount || "" %></div>
-        </div>
-      </a>
-    <% }) %>
+    <% if (safeItems.length > 0) { %>
+      <% safeItems.forEach((d, idx) => { %>
+        <a href="/detail/<%= d.bookId %>" 
+           class="pan-card group"
+           data-aos="zoom-in"
+           data-aos-delay="<%= Math.min(220, idx * 35) %>">
+          <div class="pan-poster">
+            <img loading="lazy" 
+                 src="<%= d.bookCover %>" 
+                 alt="<%= d.bookName %>" 
+                 class="pan-img"/>
+            <div class="pan-posterOverlay"></div>
+          </div>
+          <div class="mt-3">
+            <div class="text-sm opacity-90 line-clamp-2"><%= d.bookName %></div>
+            <div class="text-xs opacity-60 mt-1"><%= d.playCount || "" %></div>
+          </div>
+        </a>
+      <% }) %>
+    <% } else { %>
+      <!-- Fallback UI jika tidak ada data -->
+      <div class="text-center opacity-60 text-sm py-10 border border-white/5 rounded-xl">
+        No content available.
+      </div>
+    <% } %>
   </div>
 </section>
