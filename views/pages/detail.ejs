@@ -1,10 +1,8 @@
 <div class="max-w-7xl mx-auto px-4 sm:px-6 py-10">
   <section class="grid lg:grid-cols-[360px,1fr] gap-10">
     <div data-aos="flip-left">
-      <div class="rounded-3xl overflow-hidden border border-white/10 pan-glass">
-        <img src="/img?u=<%= encodeURIComponent(detail.bookCover || '') %>"
-             alt="<%= detail.bookName %>"
-             class="w-full object-cover" loading="lazy"/>
+      <div class="pan-coverCard">
+        <img src="/img?u=<%= encodeURIComponent(detail.bookCover || '') %>" alt="<%= detail.bookName %>" loading="lazy"/>
       </div>
 
       <div class="mt-5 flex gap-2 flex-wrap">
@@ -54,10 +52,7 @@
         <div class="mt-5 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           <% episodes.forEach((ep, i) => { %>
             <% if (ep.unlock) { %>
-              <a href="/watch/<%= detail.bookId %>/<%= ep.chapterId %>"
-                 class="pan-epBtn"
-                 data-aos="zoom-in"
-                 data-aos-delay="<%= Math.min(240, i*8) %>">
+              <a href="/watch/<%= detail.bookId %>/<%= ep.chapterId %>" class="pan-epBtn" data-aos="zoom-in" data-aos-delay="<%= Math.min(240, i*8) %>">
                 <div class="text-xs opacity-70">EP</div>
                 <div class="text-sm mt-1 font-semibold">EP <%= (ep.chapterIndex + 1) %></div>
                 <div class="text-xs opacity-55 mt-2 flex items-center gap-2">
