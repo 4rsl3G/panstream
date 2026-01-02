@@ -5,65 +5,80 @@ const NodeCache = require("node-cache");
 const morgan = require("morgan");
 const helmet = require("helmet");
 const compression = require("compression");
+const path = require("path");
+const { URL } = require("url");
 
 const app = express();
 
 const PORT = process.env.PORT || 3000;
-const SITE_URL = process.env.SITE_URL || `https://panstream-ten.vercel.app`;
 const API_BASE = process.env.API_BASE || "https://api.sansekai.my.id/api/dramabox";
 const CACHE_TTL = Number(process.env.CACHE_TTL_SECONDS || 180);
 
-const cache = new NodeCache({ stdTTL: CACHE_TTL, checkperiod: Math.max(30, Math.floor(CACHE_TTL / 2)) });
+const cache = new NodeCache({
+  stdTTL: CACHE_TTL,
+  checkperiod: Math.max(30, Math.floor(CACHE_TTL / 2))
+});
 
 app.set("view engine", "ejs");
+app.set("views", path.join(process.cwd(), "views"));
 app.use(layouts);
 app.set("layout", "layouts/main");
 
-app.use(express.static("public", { maxAge: "7d" }));
+app.use(express.static(path.join(process.cwd(), "public"), { maxAge: "7d" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
 app.use(compression());
 app.use(
   helmet({
-    contentSecurityPolicy: false // karena pakai CDN Tailwind/AOS/Alpine/jQuery
+    contentSecurityPolicy: false
   })
 );
 app.use(morgan("dev"));
 
-function absUrl(path) {
-  const base = SITE_URL.replace(/\/$/, "");
-  const p = String(path || "").startsWith("/") ? path : `/${path}`;
-  return base + p;
-}
-
-async function apiGet(path, params = {}) {
-  const key = `GET:${path}:${JSON.stringify(params)}`;
-  const hit = cache.get(key);
-  if (hit) return hit;
-
-  const url = `${API_BASE}${path}`;
-  const res = await axios.get(url, {
-    params,
-    headers: { accept: "*/*" },
-    timeout: 12000
-  });
-
-  cache.set(key, res.data);
-  return res.data;
-}
-
+/** ======================
+ * Utils
+ * ====================== */
 function safeArr(x) {
   return Array.isArray(x) ? x : [];
 }
 function first(x) {
   return safeArr(x)[0] || null;
 }
+function isObj(x) {
+  return x && typeof x === "object" && !Array.isArray(x);
+}
 
-function baseMeta({ title, description, path, image }) {
-  const t = title ? `${title} • PanStream` : "PanStream • Streaming Drama";
-  const d = description || "PanStream – streaming drama pilihanmu dengan pengalaman premium.";
-  const u = absUrl(path || "/");
+// Normalisasi detail: kadang API bisa return object atau array(1)
+function normalizeDetail(detail) {
+  if (Array.isArray(detail)) return detail[0] || {};
+  if (isObj(detail)) return detail;
+  return {};
+}
+
+// Normalisasi episodes: kadang array, kadang object berisi list/data/episodes
+function normalizeEpisodes(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (isObj(raw)) {
+    if (Array.isArray(raw.list)) return raw.list;
+    if (Array.isArray(raw.data)) return raw.data;
+    if (Array.isArray(raw.episodes)) return raw.episodes;
+    if (Array.isArray(raw.result)) return raw.result;
+  }
+  return [];
+}
+
+function getBaseUrl(req) {
+  const proto = (req.headers["x-forwarded-proto"] || "https").split(",")[0].trim();
+  const host = (req.headers["x-forwarded-host"] || req.headers.host || "").split(",")[0].trim();
+  return `${proto}://${host}`;
+}
+
+function baseMeta(req, { title, description, path, image }) {
+  const t = title ? `${title} • PanStream` : "PanStream • Luxury Streaming";
+  const d = description || "PanStream — luxury streaming experience.";
+  const base = getBaseUrl(req).replace(/\/$/, "");
+  const u = base + (String(path || "/").startsWith("/") ? path : `/${path}`);
   return {
     title: t,
     description: d,
@@ -73,9 +88,54 @@ function baseMeta({ title, description, path, image }) {
   };
 }
 
-/** =======================
- *  Proxy API (Frontend Friendly)
- * ======================= */
+async function apiGet(pathname, params = {}) {
+  const key = `GET:${pathname}:${JSON.stringify(params)}`;
+  const hit = cache.get(key);
+  if (hit) return hit;
+
+  const url = `${API_BASE}${pathname}`;
+  const res = await axios.get(url, {
+    params,
+    headers: { accept: "*/*" },
+    timeout: 15000
+  });
+
+  cache.set(key, res.data);
+  return res.data;
+}
+
+/** ======================
+ * Image Proxy (Fix iOS/hotlink)
+ * ====================== */
+app.get("/img", async (req, res) => {
+  try {
+    const u = String(req.query.u || "");
+    if (!u) return res.status(400).send("Missing u");
+
+    const parsed = new URL(u);
+
+    // allowlist (aman)
+    const allowed = [
+      "hwztchapter.dramaboxdb.com",
+      "hwztvideo.dramaboxdb.com",
+      "hwztakavideo.dramaboxdb.com",
+      "dramaboxdb.com"
+    ];
+    const okHost = allowed.some((h) => parsed.hostname.endsWith(h));
+    if (!okHost) return res.status(403).send("Host not allowed");
+
+    const r = await axios.get(u, { responseType: "arraybuffer", timeout: 15000 });
+    res.setHeader("Content-Type", r.headers["content-type"] || "image/jpeg");
+    res.setHeader("Cache-Control", "public, max-age=86400, s-maxage=86400");
+    return res.send(Buffer.from(r.data));
+  } catch (e) {
+    return res.status(404).send("Image not found");
+  }
+});
+
+/** ======================
+ * API proxy for frontend
+ * ====================== */
 app.get("/api/home", async (req, res) => {
   try {
     const [vip, dubindo, random, foryou, latest, trending] = await Promise.all([
@@ -114,29 +174,9 @@ app.get("/api/search", async (req, res) => {
   }
 });
 
-app.get("/api/detail/:bookId", async (req, res) => {
-  try {
-    const bookId = req.params.bookId;
-    const detail = await apiGet("/detail", { bookId });
-    res.json(detail);
-  } catch {
-    res.status(500).json({ error: "detail_failed" });
-  }
-});
-
-app.get("/api/episodes/:bookId", async (req, res) => {
-  try {
-    const bookId = req.params.bookId;
-    const eps = await apiGet("/allepisode", { bookId });
-    res.json(eps);
-  } catch {
-    res.status(500).json({ error: "episodes_failed" });
-  }
-});
-
-/** =======================
- *  SSR Pages
- * ======================= */
+/** ======================
+ * SSR Pages
+ * ====================== */
 app.get("/", async (req, res) => {
   try {
     const [vip, dubindo, random, foryou, latest, trending] = await Promise.all([
@@ -150,22 +190,28 @@ app.get("/", async (req, res) => {
 
     const hero = first(trending) || first(latest) || first(vip);
 
-    const meta = baseMeta({
+    const meta = baseMeta(req, {
       title: "PanStream",
-      description: "Streaming drama VIP, dub indo, trending, dan rekomendasi — pengalaman premium tanpa gimmick.",
+      description: "Luxury streaming — VIP, dub indo, trending, for you.",
       path: "/",
-      image: hero?.bookCover
+      image: hero?.bookCover ? `${getBaseUrl(req)}/img?u=${encodeURIComponent(hero.bookCover)}` : ""
     });
 
     res.render("pages/home", {
       meta,
       hero,
-      sections: { vip, dubindo, random, foryou, latest, trending }
+      sections: {
+        vip: safeArr(vip),
+        dubindo: safeArr(dubindo),
+        random: safeArr(random),
+        foryou: safeArr(foryou),
+        latest: safeArr(latest),
+        trending: safeArr(trending)
+      }
     });
   } catch {
-    const meta = baseMeta({ title: "PanStream", path: "/" });
     res.render("pages/home", {
-      meta,
+      meta: baseMeta(req, { title: "PanStream", path: "/" }),
       hero: null,
       sections: { vip: [], dubindo: [], random: [], foryou: [], latest: [], trending: [] }
     });
@@ -174,86 +220,103 @@ app.get("/", async (req, res) => {
 
 app.get("/browse", async (req, res) => {
   const classify = String(req.query.classify || "terbaru");
-  const meta = baseMeta({
+  let page1 = [];
+  try {
+    page1 = safeArr(await apiGet("/dubindo", { classify, page: 1 }));
+  } catch {}
+
+  const meta = baseMeta(req, {
     title: `Browse ${classify}`,
-    description: `Jelajahi dub indo (${classify}) dengan infinite scroll di PanStream.`,
+    description: `Browse dub indo (${classify}) with infinite scroll.`,
     path: `/browse?classify=${encodeURIComponent(classify)}`
   });
 
-  let page1 = [];
-  try {
-    page1 = await apiGet("/dubindo", { classify, page: 1 });
-  } catch {}
-
-  res.render("pages/browse", { meta, classify, page1: safeArr(page1) });
+  res.render("pages/browse", { meta, classify, page1 });
 });
 
 app.get("/detail/:bookId", async (req, res) => {
   const bookId = req.params.bookId;
   try {
-    const [detail, episodes] = await Promise.all([
-      apiGet("/detail", { bookId }),
-      apiGet("/allepisode", { bookId })
-    ]);
+    const rawDetail = await apiGet("/detail", { bookId });
+    const detail = normalizeDetail(rawDetail);
 
-    const d = detail || {};
-    const eps = safeArr(episodes);
+    const rawEpisodes = await apiGet("/allepisode", { bookId });
+    const episodes = normalizeEpisodes(rawEpisodes)
+      .map((ep, i) => ({
+        chapterId: String(ep.chapterId ?? ep.id ?? ep.chapter_id ?? ""),
+        chapterName: ep.chapterName ?? ep.name ?? `Episode ${i + 1}`,
+        videoPath: ep.videoPath ?? ep.videoUrl ?? ep.playUrl ?? ""
+      }))
+      .filter((x) => x.chapterId); // penting: jangan bikin link undefined
 
-    const meta = baseMeta({
-      title: d.bookName || "Detail",
-      description: (d.introduction || "").slice(0, 160) || "Detail drama di PanStream.",
+    const meta = baseMeta(req, {
+      title: detail.bookName || "Detail",
+      description: (detail.introduction || "").slice(0, 160) || "Detail drama di PanStream.",
       path: `/detail/${bookId}`,
-      image: d.bookCover
+      image: detail.bookCover ? `${getBaseUrl(req)}/img?u=${encodeURIComponent(detail.bookCover)}` : ""
     });
 
-    res.render("pages/detail", { meta, detail: d, episodes: eps });
-  } catch {
-    res.status(404).render("pages/404", { meta: baseMeta({ title: "Tidak ditemukan", path: req.path }) });
+    res.render("pages/detail", { meta, detail, episodes });
+  } catch (e) {
+    console.error("DETAIL_ERROR:", e?.message || e);
+    res.status(404).render("pages/404", { meta: baseMeta(req, { title: "404", path: req.path }) });
   }
 });
 
 app.get("/watch/:bookId/:chapterId", async (req, res) => {
-  const { bookId, chapterId } = req.params;
+  const { bookId } = req.params;
+  const chapterId = String(req.params.chapterId || "");
+
   try {
-    const [detail, episodes] = await Promise.all([
-      apiGet("/detail", { bookId }),
-      apiGet("/allepisode", { bookId })
-    ]);
+    const rawDetail = await apiGet("/detail", { bookId });
+    const detail = normalizeDetail(rawDetail);
 
-    const d = detail || {};
-    const eps = safeArr(episodes);
+    const rawEpisodes = await apiGet("/allepisode", { bookId });
+    const episodes = normalizeEpisodes(rawEpisodes)
+      .map((ep, i) => ({
+        i,
+        chapterId: String(ep.chapterId ?? ep.id ?? ep.chapter_id ?? ""),
+        chapterName: ep.chapterName ?? ep.name ?? `Episode ${i + 1}`,
+        videoPath: ep.videoPath ?? ep.videoUrl ?? ep.playUrl ?? "",
+        href: `/watch/${bookId}/${String(ep.chapterId ?? ep.id ?? ep.chapter_id ?? "")}`
+      }))
+      .filter((x) => x.chapterId);
 
-    const currentIndex = Math.max(0, eps.findIndex(x => String(x.chapterId) === String(chapterId)));
-    const current = eps[currentIndex] || eps[0] || null;
+    // kalau chapterId invalid / tidak ketemu → redirect ke episode pertama biar tidak 404
+    const idx = episodes.findIndex((x) => x.chapterId === chapterId);
+    if (idx === -1) {
+      const firstEp = episodes[0];
+      if (!firstEp) throw new Error("No episodes");
+      return res.redirect(firstEp.href);
+    }
 
-    const videoPath = current?.videoPath || d.videoPath || "";
+    const current = episodes[idx];
+    const videoPath = current.videoPath || detail.videoPath || "";
 
-    const meta = baseMeta({
-      title: `${d.bookName || "Watch"} — Episode`,
-      description: `Tonton ${d.bookName || "drama"} dengan pemutar premium PanStream.`,
+    const meta = baseMeta(req, {
+      title: `${detail.bookName || "Watch"} — ${current.chapterName || "Episode"}`,
+      description: `Watch ${detail.bookName || "drama"} on PanStream.`,
       path: `/watch/${bookId}/${chapterId}`,
-      image: d.bookCover
+      image: detail.bookCover ? `${getBaseUrl(req)}/img?u=${encodeURIComponent(detail.bookCover)}` : ""
     });
 
     res.render("pages/watch", {
       meta,
-      detail: d,
-      episodes: eps,
+      detail,
+      episodes,
       player: {
         bookId,
         chapterId,
-        currentIndex,
+        currentIndex: idx,
         videoPath
       }
     });
-  } catch {
-    res.status(404).render("pages/404", { meta: baseMeta({ title: "Tidak ditemukan", path: req.path }) });
+  } catch (e) {
+    console.error("WATCH_ERROR:", e?.message || e);
+    res.status(404).render("pages/404", { meta: baseMeta(req, { title: "404", path: req.path }) });
   }
 });
 
-/** =======================
- *  SEO: dynamic sitemap.xml
- * ======================= */
 app.get("/sitemap.xml", async (req, res) => {
   res.type("application/xml");
 
@@ -268,17 +331,18 @@ app.get("/sitemap.xml", async (req, res) => {
     items = [...safeArr(vip), ...safeArr(latest), ...safeArr(trending), ...safeArr(foryou)];
   } catch {}
 
+  const base = getBaseUrl(req).replace(/\/$/, "");
   const seen = new Set();
-  const urls = [];
-
-  urls.push({ loc: absUrl("/"), changefreq: "daily", priority: "1.0" });
-  urls.push({ loc: absUrl("/browse?classify=terbaru"), changefreq: "daily", priority: "0.8" });
+  const urls = [
+    { loc: `${base}/`, changefreq: "daily", priority: "1.0" },
+    { loc: `${base}/browse?classify=terbaru`, changefreq: "daily", priority: "0.8" }
+  ];
 
   for (const it of items) {
     const id = it?.bookId;
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    urls.push({ loc: absUrl(`/detail/${id}`), changefreq: "weekly", priority: "0.7" });
+    urls.push({ loc: `${base}/detail/${id}`, changefreq: "weekly", priority: "0.7" });
   }
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -294,14 +358,21 @@ ${urls
   )
   .join("")}
 </urlset>`;
-
   res.send(xml);
 });
 
 app.use((req, res) => {
-  res.status(404).render("pages/404", { meta: baseMeta({ title: "404", path: req.path }) });
+  res.status(404).render("pages/404", { meta: baseMeta(req, { title: "404", path: req.path }) });
 });
 
-app.listen(PORT, () => {
-  console.log(`PanStream running: ${SITE_URL} (port ${PORT})`);
+app.use((err, req, res, next) => {
+  console.error("PANSTREAM_FATAL:", err);
+  res.status(500).send("Internal Server Error");
 });
+
+module.exports = app;
+
+// local only
+if (process.env.NODE_ENV !== "production") {
+  app.listen(PORT, () => console.log(`PanStream local on :${PORT}`));
+}
