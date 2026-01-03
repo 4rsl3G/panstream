@@ -1,6 +1,9 @@
-/* PanStream — VPS build (FINAL, NO PROXY)
+/* PanStream — VPS build (FINAL, NO IMAGE PROXY)
    Backend: Node.js + Express + EJS Layouts
    Features: SEO, sitemap/robots, browse infinite, custom player endpoints
+   Fixes:
+   - pageScript default
+   - cover list sometimes empty/invalid => normalize & repair using /detail
 */
 
 const path = require("path");
@@ -94,14 +97,32 @@ function toAbsUrl(u) {
   return s;
 }
 
+// ✅ cover list kadang pakai key beda
+function pickCover(item = {}) {
+  return (
+    item.bookCover ||
+    item.cover ||
+    item.book_cover ||
+    item.coverUrl ||
+    item.coverURL ||
+    item.image ||
+    item.imageUrl ||
+    item.poster ||
+    item.posterUrl ||
+    item.verticalCover ||
+    item.verticalCoverUrl ||
+    ""
+  );
+}
+
 function normalizeCard(item = {}) {
-  const coverRaw = item.bookCover || item.cover || "";
+  const coverRaw = pickCover(item);
   return {
-    bookId: String(item.bookId || ""),
-    bookName: item.bookName || "",
+    bookId: String(item.bookId || item.id || ""),
+    bookName: item.bookName || item.name || "",
     cover: toAbsUrl(coverRaw),
-    introduction: item.introduction || "",
-    playCount: item.playCount || "",
+    introduction: item.introduction || item.desc || "",
+    playCount: item.playCount || item.play || "",
     tags: Array.isArray(item.tags) ? item.tags : []
   };
 }
@@ -141,6 +162,31 @@ function buildEpisodesFromDetail(rawDetail) {
     .filter((ep) => ep.chapterId);
 }
 
+// ✅ repair: kalau cover list kosong/invalid, ambil cover dari /detail (dibatasi)
+async function fillMissingCovers(cards, limit = 12) {
+  if (!Array.isArray(cards) || !cards.length) return cards;
+
+  const need = cards
+    .filter((x) => x && x.bookId && (!x.cover || String(x.cover).trim() === ""))
+    .slice(0, limit);
+
+  if (!need.length) return cards;
+
+  await Promise.all(
+    need.map(async (c) => {
+      try {
+        const raw = await apiGet("/detail", { bookId: c.bookId });
+        const det = normalizeDetailFromApi(raw);
+        if (det.bookCover) c.cover = det.bookCover;
+      } catch {
+        // ignore
+      }
+    })
+  );
+
+  return cards;
+}
+
 // ---------- SEO robots + sitemap ----------
 app.get("/robots.txt", (req, res) => {
   const baseUrl = getBaseUrl(req);
@@ -171,6 +217,14 @@ app.get("/", async (req, res) => {
     const foryou = normalizeList(foryouRaw).map(normalizeCard);
     const random = normalizeList(randomRaw).map(normalizeCard);
 
+    // ✅ repair covers (biar home gak "?" tapi detail bisa)
+    await Promise.all([
+      fillMissingCovers(trending, 16),
+      fillMissingCovers(latest, 16),
+      fillMissingCovers(foryou, 12),
+      fillMissingCovers(random, 12)
+    ]);
+
     const featured = trending[0] || latest[0] || foryou[0] || random[0] || null;
 
     const jsonLd = {
@@ -200,6 +254,7 @@ app.get("/", async (req, res) => {
   }
 });
 
+// Browse page (infinite scroll)
 app.get("/browse", async (req, res) => {
   const classify = String(req.query.classify || "terbaru");
   const page = Number(req.query.page || 1);
@@ -207,6 +262,9 @@ app.get("/browse", async (req, res) => {
   try {
     const raw = await apiGet("/dubindo", { classify, page });
     const items = normalizeList(raw).map(normalizeCard);
+
+    // ✅ repair covers untuk grid (biar gak "?" )
+    await fillMissingCovers(items, 24);
 
     const meta = baseMeta(req, {
       title: "Browse",
@@ -222,12 +280,17 @@ app.get("/browse", async (req, res) => {
   }
 });
 
+// Browse JSON for infinite scroll
 app.get("/api/browse", async (req, res) => {
   try {
     const classify = String(req.query.classify || "terbaru");
     const page = Number(req.query.page || 1);
     const raw = await apiGet("/dubindo", { classify, page });
     const items = normalizeList(raw).map(normalizeCard);
+
+    // ✅ optional repair covers untuk JSON juga (biar infinite scroll aman)
+    await fillMissingCovers(items, 24);
+
     res.json({ classify, page, items });
   } catch (e) {
     console.error("API_BROWSE_ERR:", e?.message || e);
@@ -245,6 +308,7 @@ app.get("/search", async (req, res) => {
     try {
       const raw = await apiGet("/search", { query: q.trim() });
       items = normalizeList(raw).map(normalizeCard);
+      await fillMissingCovers(items, 24);
     } catch {
       items = [];
     }
@@ -338,6 +402,7 @@ app.get("/watch/:bookId/:chapterId", async (req, res) => {
   }
 });
 
+// Player sources endpoint
 app.get("/api/sources", async (req, res) => {
   try {
     const bookId = String(req.query.bookId || "");
