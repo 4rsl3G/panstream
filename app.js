@@ -1,6 +1,6 @@
-/* PanStream — VPS build (FINAL UPDATE)
+/* PanStream — VPS build (FINAL, NO PROXY)
    Backend: Node.js + Express + EJS Layouts
-   Features: SEO, sitemap/robots, image proxy, browse infinite, custom player endpoints
+   Features: SEO, sitemap/robots, browse infinite, custom player endpoints
 */
 
 const path = require("path");
@@ -83,7 +83,7 @@ function normalizeList(raw) {
   return [];
 }
 
-// ✅ Normalisasi URL cover/asset dari API (fix: cover tanpa https)
+// ✅ Normalisasi URL cover/asset dari API (fix cover tanpa https / //domain)
 function toAbsUrl(u) {
   const s = String(u || "").trim();
   if (!s) return "";
@@ -140,56 +140,6 @@ function buildEpisodesFromDetail(rawDetail) {
     }))
     .filter((ep) => ep.chapterId);
 }
-
-function isHttpUrl(s) {
-  return /^https?:\/\//i.test(String(s || ""));
-}
-
-// ---------- Image proxy (FINAL FIX: works on VPS, no .pipe) ----------
-app.get("/img", async (req, res) => {
-  const uRaw = String(req.query.u || "").trim();
-  if (!uRaw) return res.status(400).send("bad_url");
-
-  // kalau u masih tanpa https, coba normalisasi juga (buat jaga-jaga)
-  const u = toAbsUrl(uRaw);
-  if (!isHttpUrl(u)) return res.status(400).send("bad_url");
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
-
-  try {
-    const upstream = await fetch(u, {
-      signal: controller.signal,
-      redirect: "follow",
-      headers: {
-        "User-Agent": "Mozilla/5.0 (PanStream Image Proxy)",
-        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-        "Referer": getBaseUrl(req) + "/",
-        "Accept-Language": "en-US,en;q=0.9,id;q=0.8"
-      }
-    });
-
-    if (upstream.status === 404) return res.status(404).send("img_not_found");
-    if (!upstream.ok) {
-      console.error("IMG_UPSTREAM_ERR:", upstream.status, u);
-      return res.status(502).send(`upstream_${upstream.status}`);
-    }
-
-    const ct = upstream.headers.get("content-type") || "image/jpeg";
-    res.setHeader("Content-Type", ct);
-    res.setHeader("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800");
-
-    // IMPORTANT: some Node fetch implementations return WebStream (no .pipe)
-    const ab = await upstream.arrayBuffer();
-    res.end(Buffer.from(ab));
-  } catch (e) {
-    const msg = e?.name === "AbortError" ? "img_timeout" : "img_proxy_failed";
-    console.error("IMG_PROXY_ERR:", msg, e?.message || e, u);
-    res.status(502).send(msg);
-  } finally {
-    clearTimeout(timeout);
-  }
-});
 
 // ---------- SEO robots + sitemap ----------
 app.get("/robots.txt", (req, res) => {
@@ -250,7 +200,6 @@ app.get("/", async (req, res) => {
   }
 });
 
-// Browse page (infinite scroll)
 app.get("/browse", async (req, res) => {
   const classify = String(req.query.classify || "terbaru");
   const page = Number(req.query.page || 1);
@@ -273,7 +222,6 @@ app.get("/browse", async (req, res) => {
   }
 });
 
-// Browse JSON for infinite scroll
 app.get("/api/browse", async (req, res) => {
   try {
     const classify = String(req.query.classify || "terbaru");
@@ -323,7 +271,7 @@ app.get("/detail/:bookId", async (req, res) => {
       title: detail.bookName || "Detail",
       description: (detail.introduction || "").slice(0, 160) || "Detail drama di PanStream.",
       path: `/detail/${bookId}`,
-      image: detail.bookCover ? `${getBaseUrl(req)}/img?u=${encodeURIComponent(detail.bookCover)}` : undefined,
+      image: detail.bookCover || undefined,
       jsonLd: {
         "@context": "https://schema.org",
         "@type": "TVSeries",
@@ -380,7 +328,7 @@ app.get("/watch/:bookId/:chapterId", async (req, res) => {
       title: `${detail.bookName} • EP ${current.chapterIndex + 1}`,
       description: `Tonton ${detail.bookName} di PanStream.`,
       path: `/watch/${bookId}/${chapterId}`,
-      image: detail.bookCover ? `${getBaseUrl(req)}/img?u=${encodeURIComponent(detail.bookCover)}` : undefined
+      image: detail.bookCover || undefined
     });
 
     res.render("pages/watch", { meta, detail, episodes, player });
@@ -390,7 +338,6 @@ app.get("/watch/:bookId/:chapterId", async (req, res) => {
   }
 });
 
-// Player sources endpoint
 app.get("/api/sources", async (req, res) => {
   try {
     const bookId = String(req.query.bookId || "");
