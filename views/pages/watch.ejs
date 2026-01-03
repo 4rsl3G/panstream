@@ -13,12 +13,13 @@
   <section class="mt-8 pan-playerShell" data-aos="zoom-out">
     <div id="panPlayerRoot"
       class="pan-playerRoot"
-      data-video="<%= player.videoPath %>"
+      data-video="<%= player.videoUrl || '' %>"
+      data-hls="<%= player.hlsUrl || '' %>"
       data-book="<%= player.bookId %>"
       data-chapter="<%= player.chapterId %>"
       data-index="<%= player.currentIndex %>"
       data-total="<%= episodes.length %>"
-      data-cover="<%= detail.bookCover %>"
+      data-cover="<%= detail.bookCover || '' %>"
       data-title="<%= detail.bookName %>"
     >
       <video id="panVideo" class="pan-video" preload="metadata" playsinline></video>
@@ -96,7 +97,11 @@
       </div>
 
       <div id="panPoster" class="pan-posterLayer">
-        <img src="<%= detail.bookCover %>" alt="cover" />
+        <img
+          src="<%= detail.bookCover ? ('/img?u=' + encodeURIComponent(detail.bookCover)) : '/public/img/og.png' %>"
+          alt="cover"
+          onerror="this.onerror=null;this.src='/public/img/og.png';"
+        />
         <div class="pan-posterShade"></div>
         <button class="pan-bigPlay" data-action="play"><i class="ri-play-large-fill"></i> Play</button>
       </div>
@@ -134,11 +139,15 @@
 </div>
 
 <script>
+  // Dipakai untuk next episode / navigasi JS
   window.__PAN_EPISODES__ = <%- JSON.stringify(episodes.map((ep, i) => ({
     i,
     chapterId: String(ep.chapterId || ""),
-    videoPath: ep.videoPath || "",
+    mp4: ep.mp4 || "",
+    hls: (ep.m3u8Flag && ep.m3u8Url) ? ep.m3u8Url : "",
     href: `/watch/${detail.bookId}/${ep.chapterId}`
   }))) %>;
 </script>
-<script src="/js/player.js"></script>
+
+<!-- pastikan path ini benar: kalau file kamu ada di /public/js/player.js maka harus /public/js/player.js -->
+<script src="/public/js/player.js"></script>
