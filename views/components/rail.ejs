@@ -18,6 +18,8 @@
             src="<%= d.cover || '/public/img/og.png' %>"
             alt="<%= d.bookName %>"
             class="pan-img"
+            referrerpolicy="no-referrer"
+            crossorigin="anonymous"
             onerror="this.onerror=null;this.src='/public/img/og.png';"
           />
           <div class="pan-posterOverlay"></div>
@@ -25,7 +27,7 @@
 
         <div class="mt-3">
           <div class="text-sm opacity-90 line-clamp-2"><%= d.bookName %></div>
-          <div class="text-xs opacity-60 mt-1"><%= d.playCount || "" %></div>
+          <div class="text-xs opacity-60 mt-1"><%= d.playCount || '' %></div>
         </div>
       </a>
     <% }) %>
