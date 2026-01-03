@@ -65,8 +65,8 @@
   <script src="https://unpkg.com/aos@2.3.4/dist/aos.js"></script>
   <script src="/public/js/app.js"></script>
   <script src="/public/js/rail.js"></script>
-  <% if (pageScript) { %>
-    <script src="/public/js/<%= pageScript %>"></script>
-  <% } %>
+  <% if (typeof pageScript !== 'undefined' && pageScript) { %>
+  <script src="/public/js/<%= pageScript %>"></script>
+<% } %>
 </body>
 </html>
