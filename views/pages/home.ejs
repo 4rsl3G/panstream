@@ -2,7 +2,11 @@
   <section class="pan-hero" data-aos="fade-up">
     <% if (featured) { %>
       <div class="pan-heroBg">
-        <img src="/img?u=<%= encodeURIComponent(featured.cover || '') %>" alt="" />
+        <img
+          src="<%= featured.cover ? ('/img?u=' + encodeURIComponent(featured.cover)) : '/public/img/og.png' %>"
+          alt=""
+          onerror="this.onerror=null;this.src='/public/img/og.png';"
+        />
       </div>
 
       <div class="pan-heroCard">
