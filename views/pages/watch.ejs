@@ -24,21 +24,15 @@
     >
       <video id="panVideo" class="pan-video" preload="metadata" playsinline></video>
 
-      <!-- Brightness overlay (gesture left swipe up/down) -->
       <div id="panBright" class="pan-brightness"></div>
 
-      <!-- Loading HUD -->
       <div class="pan-loadingHUD">
         <div class="pan-spinner sm"></div>
         <div class="pan-loadingLabel" data-label="Loading…"></div>
       </div>
 
-      <!-- Watermark -->
       <div class="pan-watermark"><span>PanStream</span></div>
-
-      <!-- Gesture toast -->
       <div id="panToast" class="pan-toast"></div>
-
       <div id="panOverlay" class="pan-overlay"></div>
 
       <div id="panControls" class="pan-controls">
@@ -98,7 +92,7 @@
 
       <div id="panPoster" class="pan-posterLayer">
         <img
-          src="<%= detail.bookCover ? ('/img?u=' + encodeURIComponent(detail.bookCover)) : '/public/img/og.png' %>"
+          src="<%= detail.bookCover || '/public/img/og.png' %>"
           alt="cover"
           onerror="this.onerror=null;this.src='/public/img/og.png';"
         />
@@ -106,7 +100,6 @@
         <button class="pan-bigPlay" data-action="play"><i class="ri-play-large-fill"></i> Play</button>
       </div>
 
-      <!-- Auto-next overlay -->
       <div id="panNextOverlay" class="pan-nextOverlay">
         <div class="pan-nextCard">
           <div class="pan-spinner sm"></div>
@@ -139,7 +132,6 @@
 </div>
 
 <script>
-  // Dipakai untuk next episode / navigasi JS
   window.__PAN_EPISODES__ = <%- JSON.stringify(episodes.map((ep, i) => ({
     i,
     chapterId: String(ep.chapterId || ""),
@@ -149,5 +141,4 @@
   }))) %>;
 </script>
 
-<!-- pastikan path ini benar: kalau file kamu ada di /public/js/player.js maka harus /public/js/player.js -->
 <script src="/public/js/player.js"></script>
