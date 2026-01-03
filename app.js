@@ -25,7 +25,7 @@ const SITE_NAME = "PanStream";
 const SITE_TAGLINE = "Luxury streaming experience";
 
 const API_BASE = "https://sapimu.au/shortmax/api/v1";
-const API_TOKEN = process.env.SHORTMAX_TOKEN || "";
+const API_TOKEN = process.env.SHORTMAX_TOKEN || "8086209aaa06896767a6603eaf6ad296270e8a9459cd2eba20f020dab86f693e";
 
 // ====== Basic guards ======
 if (!API_TOKEN) {
