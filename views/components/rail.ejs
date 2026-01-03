@@ -1,6 +1,7 @@
 <section class="mt-12">
   <div class="flex items-end justify-between">
     <h2 class="text-xl md:text-2xl tracking-[0.25em] uppercase opacity-90" data-aos="fade-right"><%= title %></h2>
+
     <% if (typeof cta !== "undefined" && cta) { %>
       <a href="<%= cta.href %>" class="text-xs tracking-[0.35em] uppercase opacity-60 hover:opacity-90 transition" data-aos="fade-left">
         <%= cta.label %> <i class="ri-arrow-right-line"></i>
@@ -12,9 +13,16 @@
     <% (items || []).forEach((d, idx) => { %>
       <a href="/detail/<%= d.bookId %>" class="pan-card group" data-aos="zoom-in" data-aos-delay="<%= Math.min(220, idx*35) %>">
         <div class="pan-poster">
-          <img loading="lazy" src="/img?u=<%= encodeURIComponent(d.cover || '') %>" alt="<%= d.bookName %>" class="pan-img" />
+          <img
+            loading="lazy"
+            src="<%= d.cover ? ('/img?u=' + encodeURIComponent(d.cover)) : '/public/img/og.png' %>"
+            alt="<%= d.bookName %>"
+            class="pan-img"
+            onerror="this.onerror=null;this.src='/public/img/og.png';"
+          />
           <div class="pan-posterOverlay"></div>
         </div>
+
         <div class="mt-3">
           <div class="text-sm opacity-90 line-clamp-2"><%= d.bookName %></div>
           <div class="text-xs opacity-60 mt-1"><%= d.playCount || "" %></div>
