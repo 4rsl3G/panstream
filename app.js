@@ -1,4 +1,4 @@
-/* PanStream — VPS build
+/* PanStream — VPS build (FINAL)
    Backend: Node.js + Express + EJS Layouts
    Features: SEO, sitemap/robots, image proxy, browse infinite, custom player endpoints
 */
@@ -28,9 +28,9 @@ app.use(morgan("dev"));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// ✅ Default locals supaya layout tidak error (pageScript, dll)
+// ✅ default locals (fix: pageScript is not defined)
 app.use((req, res, next) => {
-  res.locals.pageScript = null; // prevents "pageScript is not defined"
+  res.locals.pageScript = null;
   next();
 });
 
@@ -70,7 +70,10 @@ async function apiGet(endpoint, params = {}) {
     url.searchParams.set(k, String(v));
   }
 
-  const res = await fetch(url.toString(), { headers: { accept: "*/*" } });
+  const res = await fetch(url.toString(), {
+    headers: { accept: "*/*" }
+  });
+
   if (!res.ok) throw new Error(`API ${endpoint} failed: ${res.status}`);
   return res.json();
 }
@@ -129,23 +132,14 @@ function buildEpisodesFromDetail(rawDetail) {
     .filter((ep) => ep.chapterId);
 }
 
-// ---------- Image proxy (lebih tahan VPS / anti-hotlink / redirect / timeout) ----------
 function isHttpUrl(s) {
   return /^https?:\/\//i.test(String(s || ""));
 }
 
+// ---------- Image proxy (FINAL FIX: no .pipe, works on VPS) ----------
 app.get("/img", async (req, res) => {
   const u = String(req.query.u || "");
   if (!u || !isHttpUrl(u)) return res.status(400).send("bad_url");
-
-  // (opsional tapi sangat disarankan) whitelist biar endpoint ini gak jadi open-proxy
-  // const allowedHosts = new Set(["hwztchapter.dramaboxdb.com"]);
-  // try {
-  //   const host = new URL(u).hostname;
-  //   if (!allowedHosts.has(host)) return res.status(403).send("forbidden_host");
-  // } catch {
-  //   return res.status(400).send("bad_url");
-  // }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
@@ -157,16 +151,13 @@ app.get("/img", async (req, res) => {
       headers: {
         "User-Agent": "Mozilla/5.0 (PanStream Image Proxy)",
         "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-        // sering dibutuhkan oleh CDN anti-hotlink:
         "Referer": getBaseUrl(req) + "/",
         "Accept-Language": "en-US,en;q=0.9,id;q=0.8"
       }
     });
 
-    // kalau upstream menolak, balikin status yang lebih masuk akal
     if (upstream.status === 404) return res.status(404).send("img_not_found");
     if (!upstream.ok) {
-      // 403/401/5xx dari upstream => 502 ke client (bad gateway)
       console.error("IMG_UPSTREAM_ERR:", upstream.status, u);
       return res.status(502).send(`upstream_${upstream.status}`);
     }
@@ -175,9 +166,9 @@ app.get("/img", async (req, res) => {
     res.setHeader("Content-Type", ct);
     res.setHeader("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800");
 
-    // streaming body (handle null body)
-    if (!upstream.body) return res.status(502).send("upstream_no_body");
-    upstream.body.pipe(res);
+    // IMPORTANT: some Node fetch implementations return WebStream (no .pipe)
+    const ab = await upstream.arrayBuffer();
+    res.end(Buffer.from(ab));
   } catch (e) {
     const msg = e?.name === "AbortError" ? "img_timeout" : "img_proxy_failed";
     console.error("IMG_PROXY_ERR:", msg, e?.message || e, u);
@@ -386,7 +377,7 @@ app.get("/watch/:bookId/:chapterId", async (req, res) => {
   }
 });
 
-// Player sources endpoint
+// Player sources endpoint: use mp4/hls from detail chapterList
 app.get("/api/sources", async (req, res) => {
   try {
     const bookId = String(req.query.bookId || "");
