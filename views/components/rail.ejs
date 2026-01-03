@@ -15,7 +15,7 @@
         <div class="pan-poster">
           <img
             loading="lazy"
-            src="<%= d.cover ? ('/img?u=' + encodeURIComponent(d.cover)) : '/public/img/og.png' %>"
+            src="<%= d.cover || '/public/img/og.png' %>"
             alt="<%= d.bookName %>"
             class="pan-img"
             onerror="this.onerror=null;this.src='/public/img/og.png';"
