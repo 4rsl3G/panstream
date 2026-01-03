@@ -1,4 +1,4 @@
-/* PanStream — VPS build (FINAL)
+/* PanStream — VPS build (FINAL UPDATE)
    Backend: Node.js + Express + EJS Layouts
    Features: SEO, sitemap/robots, image proxy, browse infinite, custom player endpoints
 */
@@ -70,10 +70,7 @@ async function apiGet(endpoint, params = {}) {
     url.searchParams.set(k, String(v));
   }
 
-  const res = await fetch(url.toString(), {
-    headers: { accept: "*/*" }
-  });
-
+  const res = await fetch(url.toString(), { headers: { accept: "*/*" } });
   if (!res.ok) throw new Error(`API ${endpoint} failed: ${res.status}`);
   return res.json();
 }
@@ -86,11 +83,23 @@ function normalizeList(raw) {
   return [];
 }
 
+// ✅ Normalisasi URL cover/asset dari API (fix: cover tanpa https)
+function toAbsUrl(u) {
+  const s = String(u || "").trim();
+  if (!s) return "";
+  if (/^https?:\/\//i.test(s)) return s;
+  if (s.startsWith("//")) return "https:" + s;
+  // domain tanpa scheme: example.com/path
+  if (/^[a-z0-9.-]+\.[a-z]{2,}\//i.test(s)) return "https://" + s;
+  return s;
+}
+
 function normalizeCard(item = {}) {
+  const coverRaw = item.bookCover || item.cover || "";
   return {
     bookId: String(item.bookId || ""),
     bookName: item.bookName || "",
-    cover: item.bookCover || item.cover || "",
+    cover: toAbsUrl(coverRaw),
     introduction: item.introduction || "",
     playCount: item.playCount || "",
     tags: Array.isArray(item.tags) ? item.tags : []
@@ -103,7 +112,7 @@ function normalizeDetailFromApi(raw) {
   return {
     bookId: String(book.bookId || ""),
     bookName: book.bookName || "",
-    bookCover: book.cover || book.bookCover || "",
+    bookCover: toAbsUrl(book.cover || book.bookCover || ""),
     introduction: book.introduction || "",
     viewCount: Number(book.viewCount || 0),
     followCount: Number(book.followCount || 0),
@@ -127,7 +136,7 @@ function buildEpisodesFromDetail(rawDetail) {
       mp4: ch.mp4 || "",
       m3u8Url: ch.m3u8Url || "",
       m3u8Flag: Boolean(ch.m3u8Flag),
-      cover: ch.cover || ""
+      cover: toAbsUrl(ch.cover || "")
     }))
     .filter((ep) => ep.chapterId);
 }
@@ -136,10 +145,14 @@ function isHttpUrl(s) {
   return /^https?:\/\//i.test(String(s || ""));
 }
 
-// ---------- Image proxy (FINAL FIX: no .pipe, works on VPS) ----------
+// ---------- Image proxy (FINAL FIX: works on VPS, no .pipe) ----------
 app.get("/img", async (req, res) => {
-  const u = String(req.query.u || "");
-  if (!u || !isHttpUrl(u)) return res.status(400).send("bad_url");
+  const uRaw = String(req.query.u || "").trim();
+  if (!uRaw) return res.status(400).send("bad_url");
+
+  // kalau u masih tanpa https, coba normalisasi juga (buat jaga-jaga)
+  const u = toAbsUrl(uRaw);
+  if (!isHttpUrl(u)) return res.status(400).send("bad_url");
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
@@ -377,7 +390,7 @@ app.get("/watch/:bookId/:chapterId", async (req, res) => {
   }
 });
 
-// Player sources endpoint: use mp4/hls from detail chapterList
+// Player sources endpoint
 app.get("/api/sources", async (req, res) => {
   try {
     const bookId = String(req.query.bookId || "");
