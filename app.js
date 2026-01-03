@@ -1,9 +1,7 @@
-/* PanStream — VPS build (FINAL, MODE B: SHELL + CLIENT FETCH)
+/* PanStream — VPS build (FINAL, MODE B: SHELL + CLIENT FETCH) — AXIOS EDITION
    Backend: Node.js + Express + EJS Layouts
    - Pages render cepat (tanpa nunggu API)
-   - Data realtime diambil lewat /api/* (server -> upstream API)
-   - NO loading.ejs
-   - Detail normalize mengikuti response /detail yang kamu kirim
+   - Data realtime diambil lewat /api/* (server -> upstream API via Axios)
 */
 
 const path = require("path");
@@ -11,6 +9,7 @@ const express = require("express");
 const compression = require("compression");
 const morgan = require("morgan");
 const ejsLayouts = require("express-ejs-layouts");
+const axios = require("axios");
 
 const app = express();
 
@@ -81,33 +80,66 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// ---------- Upstream API fetch (timeout + retry) ----------
-async function apiGet(endpoint, params = {}, timeoutMs = 25000) {
-  const url = new URL(`${API_BASE}${endpoint}`);
-  for (const [k, v] of Object.entries(params)) {
-    if (v === undefined || v === null || v === "") continue;
-    url.searchParams.set(k, String(v));
+// ============================================================================
+// AXIOS CLIENT (browser-like headers to reduce WAF/CDN blocks)
+// ============================================================================
+const axiosClient = axios.create({
+  baseURL: API_BASE,
+  // IMPORTANT: axios timeout is per request
+  timeout: 35000,
+  headers: {
+    Accept: "application/json, text/plain, */*",
+    "User-Agent":
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36",
+    "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+    Connection: "keep-alive",
+  },
+  // in case upstream returns non-200 but still JSON
+  validateStatus: () => true,
+});
+
+function buildAxiosError(endpoint, resOrErr) {
+  // resOrErr can be axios response or error
+  if (resOrErr && resOrErr.status) {
+    const status = resOrErr.status;
+    let preview = "";
+    try {
+      const data = resOrErr.data;
+      if (typeof data === "string") preview = data.slice(0, 200);
+      else preview = JSON.stringify(data).slice(0, 200);
+    } catch (_) {}
+    return new Error(`API ${endpoint} failed: ${status} body=${preview}`);
+  }
+  if (resOrErr && resOrErr.response && resOrErr.response.status) {
+    const status = resOrErr.response.status;
+    let preview = "";
+    try {
+      const data = resOrErr.response.data;
+      if (typeof data === "string") preview = data.slice(0, 200);
+      else preview = JSON.stringify(data).slice(0, 200);
+    } catch (_) {}
+    return new Error(`API ${endpoint} failed: ${status} body=${preview}`);
+  }
+  return new Error(`API ${endpoint} failed: ${resOrErr?.message || resOrErr}`);
+}
+
+async function apiGet(endpoint, params = {}, timeoutMs = 35000) {
+  const resp = await axiosClient.get(endpoint, {
+    params,
+    timeout: timeoutMs,
+  });
+
+  if (resp.status < 200 || resp.status >= 300) {
+    throw buildAxiosError(endpoint, resp);
   }
 
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const res = await fetch(url.toString(), {
-      headers: { accept: "*/*" },
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`API ${endpoint} failed: ${res.status}`);
-    return await res.json();
-  } finally {
-    clearTimeout(t);
-  }
+  return resp.data;
 }
 
 async function apiGetRetry(endpoint, params = {}, opts = {}) {
   const {
     retries = 2,
-    timeoutMs = 25000,
+    timeoutMs = 35000,
     retryDelayMs = 900,
   } = opts;
 
@@ -118,7 +150,7 @@ async function apiGetRetry(endpoint, params = {}, opts = {}) {
     } catch (e) {
       lastErr = e;
       if (i === retries) break;
-      await sleep(retryDelayMs * (i + 1));
+      await sleep(retryDelayMs * (i + 1)); // backoff
     }
   }
   throw lastErr;
@@ -129,7 +161,6 @@ function normalizeList(raw) {
   if (Array.isArray(raw)) return raw;
   if (Array.isArray(raw?.data)) return raw.data;
   if (Array.isArray(raw?.list)) return raw.list;
-  // beberapa API suka taruh items
   if (Array.isArray(raw?.items)) return raw.items;
   return [];
 }
@@ -145,7 +176,7 @@ function toAbsUrl(u) {
 
 function pickCover(item = {}) {
   return (
-    item.coverWap || // dari response dubindo kamu
+    item.coverWap ||
     item.cover ||
     item.bookCover ||
     item.book_cover ||
@@ -174,14 +205,12 @@ function normalizeCard(item = {}) {
     introduction: item.introduction || item.desc || "",
     playCount: item.playCount || item.play || "",
     tags: Array.isArray(item.tags) ? item.tags : [],
-    // opsional UI label
     corner: item.corner || null,
     chapterCount: Number(item.chapterCount || 0),
     shelfTime: item.shelfTime || item.shelf_time || "",
   };
 }
 
-// /detail normalize sesuai response yang kamu kirim
 function normalizeDetailFromApi(raw) {
   const book = raw?.data?.book || raw?.book || {};
   return {
@@ -192,13 +221,19 @@ function normalizeDetailFromApi(raw) {
     followCount: Number(book.followCount || 0),
     introduction: book.introduction || "",
     chapterCount: Number(book.chapterCount || 0),
-    tags: Array.isArray(book.tags) ? book.tags : (Array.isArray(book.labels) ? book.labels : []),
+    tags: Array.isArray(book.tags)
+      ? book.tags
+      : Array.isArray(book.labels)
+      ? book.labels
+      : [],
     labels: Array.isArray(book.labels) ? book.labels : [],
     typeTwoName: book.typeTwoName || "",
     language: book.simpleLanguage || book.language || "",
     shelfTime: book.shelfTime || "",
     performers: Array.isArray(book.performerList) ? book.performerList : [],
-    recommends: Array.isArray(raw?.data?.recommends) ? raw.data.recommends.map(normalizeCard) : [],
+    recommends: Array.isArray(raw?.data?.recommends)
+      ? raw.data.recommends.map(normalizeCard)
+      : [],
   };
 }
 
@@ -242,14 +277,14 @@ ${urls.map((u) => `<url><loc>${u}</loc></url>`).join("\n")}
 });
 
 // ============================================================================
-// PAGES (SHELL ONLY) — cepat, tidak nunggu API
+// PAGES (SHELL ONLY)
 // ============================================================================
-
 app.get("/", (req, res) => {
-  res.locals.pageScript = "/public/js/home.js"; // kamu bikin home.js untuk fetch /api/home
+  res.locals.pageScript = "/public/js/home.js";
   const meta = baseMeta(req, {
     title: "Home",
-    description: "PanStream — streaming drama dengan tampilan super mewah, cepat, dan responsif.",
+    description:
+      "PanStream — streaming drama dengan tampilan super mewah, cepat, dan responsif.",
     path: "/",
     jsonLd: {
       "@context": "https://schema.org",
@@ -264,11 +299,7 @@ app.get("/", (req, res) => {
     },
   });
 
-  // render tanpa data (client akan isi)
-  return res.render("pages/home", {
-    meta,
-    shell: true,
-  });
+  return res.render("pages/home", { meta, shell: true });
 });
 
 app.get("/browse", (req, res) => {
@@ -283,17 +314,11 @@ app.get("/browse", (req, res) => {
     path: "/browse",
   });
 
-  // inject state untuk client
-  return res.render("pages/browse", {
-    meta,
-    shell: true,
-    classify,
-    page,
-  });
+  return res.render("pages/browse", { meta, shell: true, classify, page });
 });
 
 app.get("/search", (req, res) => {
-  res.locals.pageScript = "/public/js/search.js"; // kamu bikin untuk fetch /api/search & /api/popular
+  res.locals.pageScript = "/public/js/search.js";
   const q = String(req.query.q || "").trim();
 
   const meta = baseMeta(req, {
@@ -302,15 +327,11 @@ app.get("/search", (req, res) => {
     path: q ? `/search?q=${encodeURIComponent(q)}` : "/search",
   });
 
-  return res.render("pages/search", {
-    meta,
-    shell: true,
-    q,
-  });
+  return res.render("pages/search", { meta, shell: true, q });
 });
 
 app.get("/detail/:bookId", (req, res) => {
-  res.locals.pageScript = "/public/js/detail.js"; // kamu bikin untuk fetch /api/detail?bookId=...
+  res.locals.pageScript = "/public/js/detail.js";
   const bookId = String(req.params.bookId || "");
 
   const meta = baseMeta(req, {
@@ -319,11 +340,7 @@ app.get("/detail/:bookId", (req, res) => {
     path: `/detail/${bookId}`,
   });
 
-  return res.render("pages/detail", {
-    meta,
-    shell: true,
-    bookId,
-  });
+  return res.render("pages/detail", { meta, shell: true, bookId });
 });
 
 app.get("/watch/:bookId/:chapterId", (req, res) => {
@@ -337,27 +354,19 @@ app.get("/watch/:bookId/:chapterId", (req, res) => {
     path: `/watch/${bookId}/${chapterId}`,
   });
 
-  // cfg player akan diisi client setelah fetch detail
-  return res.render("pages/watch", {
-    meta,
-    shell: true,
-    bookId,
-    chapterId,
-  });
+  return res.render("pages/watch", { meta, shell: true, bookId, chapterId });
 });
 
 // ============================================================================
 // JSON API (SERVER -> UPSTREAM) — realtime
 // ============================================================================
-
-// home bundles
 app.get("/api/home", async (req, res) => {
   try {
     const [latestRaw, trendingRaw, foryouRaw, randomRaw] = await Promise.all([
-      apiGetRetry("/latest", {}, { retries: 2, timeoutMs: 30000 }),
-      apiGetRetry("/trending", {}, { retries: 2, timeoutMs: 30000 }),
-      apiGetRetry("/foryou", {}, { retries: 2, timeoutMs: 30000 }),
-      apiGetRetry("/randomdrama", {}, { retries: 2, timeoutMs: 30000 }),
+      apiGetRetry("/latest", {}, { retries: 2, timeoutMs: 45000 }),
+      apiGetRetry("/trending", {}, { retries: 2, timeoutMs: 45000 }),
+      apiGetRetry("/foryou", {}, { retries: 2, timeoutMs: 45000 }),
+      apiGetRetry("/randomdrama", {}, { retries: 2, timeoutMs: 45000 }),
     ]);
 
     const latest = normalizeList(latestRaw).map(normalizeCard);
@@ -367,20 +376,13 @@ app.get("/api/home", async (req, res) => {
 
     const featured = trending[0] || latest[0] || foryou[0] || random[0] || null;
 
-    return res.json({
-      featured,
-      latest,
-      trending,
-      foryou,
-      random,
-    });
+    return res.json({ featured, latest, trending, foryou, random });
   } catch (e) {
     console.error("API_HOME_ERR:", e?.message || e);
     return res.status(500).json({ error: "home_failed" });
   }
 });
 
-// browse realtime (dubindo)
 app.get("/api/browse", async (req, res) => {
   try {
     const classify = String(req.query.classify || "terbaru");
@@ -389,11 +391,10 @@ app.get("/api/browse", async (req, res) => {
     const raw = await apiGetRetry(
       "/dubindo",
       { classify, page },
-      { retries: 2, timeoutMs: 30000 }
+      { retries: 2, timeoutMs: 45000 }
     );
 
     const items = normalizeList(raw).map(normalizeCard);
-
     return res.json({ classify, page, items });
   } catch (e) {
     console.error("API_BROWSE_ERR:", e?.message || e);
@@ -401,13 +402,12 @@ app.get("/api/browse", async (req, res) => {
   }
 });
 
-// popular search keywords
 app.get("/api/popular", async (req, res) => {
   try {
     const popularRaw = await apiGetRetry(
       "/populersearch",
       {},
-      { retries: 2, timeoutMs: 25000 }
+      { retries: 2, timeoutMs: 30000 }
     );
 
     const popularList = normalizeList(popularRaw);
@@ -426,7 +426,6 @@ app.get("/api/popular", async (req, res) => {
   }
 });
 
-// search results
 app.get("/api/search", async (req, res) => {
   try {
     const q = String(req.query.q || "").trim();
@@ -435,7 +434,7 @@ app.get("/api/search", async (req, res) => {
     const raw = await apiGetRetry(
       "/search",
       { query: q },
-      { retries: 2, timeoutMs: 30000 }
+      { retries: 2, timeoutMs: 45000 }
     );
 
     const items = normalizeList(raw).map(normalizeCard);
@@ -446,7 +445,6 @@ app.get("/api/search", async (req, res) => {
   }
 });
 
-// detail full (book + episodes + recommends)
 app.get("/api/detail", async (req, res) => {
   try {
     const bookId = String(req.query.bookId || "");
@@ -455,7 +453,7 @@ app.get("/api/detail", async (req, res) => {
     const rawDetail = await apiGetRetry(
       "/detail",
       { bookId },
-      { retries: 2, timeoutMs: 35000 }
+      { retries: 2, timeoutMs: 60000 }
     );
 
     const detail = normalizeDetailFromApi(rawDetail);
@@ -474,7 +472,6 @@ app.get("/api/detail", async (req, res) => {
   }
 });
 
-// player sources endpoint (ambil dari /detail)
 app.get("/api/sources", async (req, res) => {
   try {
     const bookId = String(req.query.bookId || "");
@@ -485,14 +482,13 @@ app.get("/api/sources", async (req, res) => {
     const rawDetail = await apiGetRetry(
       "/detail",
       { bookId },
-      { retries: 2, timeoutMs: 35000 }
+      { retries: 2, timeoutMs: 60000 }
     );
 
     const eps = buildEpisodesFromDetail(rawDetail);
     const ep = eps.find((x) => x.chapterId === chapterId);
     if (!ep) return res.status(404).json({ error: "episode_not_found" });
 
-    // susun sumber untuk quality dropdown
     const sources = [];
     if (ep.mp4) sources.push({ type: "mp4", label: "MP4 720p", url: ep.mp4 });
     if (ep.m3u8Flag && ep.m3u8Url)
