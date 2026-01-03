@@ -28,6 +28,12 @@ app.use(morgan("dev"));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
+// ✅ Default locals supaya layout tidak error (pageScript, dll)
+app.use((req, res, next) => {
+  res.locals.pageScript = null; // prevents "pageScript is not defined"
+  next();
+});
+
 // Static assets
 app.use("/public", express.static(path.join(process.cwd(), "public"), { maxAge: "7d" }));
 
@@ -43,7 +49,7 @@ function baseMeta(req, opts = {}) {
   const title = opts.title ? `${opts.title} • ${SITE_NAME}` : `${SITE_NAME} • ${SITE_TAGLINE}`;
   const description = opts.description || "PanStream — pengalaman streaming mewah, cepat, dan responsif.";
   const url = `${baseUrl}${opts.path || req.path || "/"}`;
-  const image = opts.image || `${baseUrl}/public/img/og.png`; // optional placeholder
+  const image = opts.image || `${baseUrl}/public/img/og.png`;
   const jsonLd = opts.jsonLd || null;
 
   return {
@@ -64,10 +70,7 @@ async function apiGet(endpoint, params = {}) {
     url.searchParams.set(k, String(v));
   }
 
-  const res = await fetch(url.toString(), {
-    headers: { accept: "*/*" }
-  });
-
+  const res = await fetch(url.toString(), { headers: { accept: "*/*" } });
   if (!res.ok) throw new Error(`API ${endpoint} failed: ${res.status}`);
   return res.json();
 }
@@ -81,7 +84,6 @@ function normalizeList(raw) {
 }
 
 function normalizeCard(item = {}) {
-  // from list endpoints (vip/latest/trending/random/foryou/populersearch/dubindo)
   return {
     bookId: String(item.bookId || ""),
     bookName: item.bookName || "",
@@ -111,57 +113,92 @@ function normalizeDetailFromApi(raw) {
 function buildEpisodesFromDetail(rawDetail) {
   const list = rawDetail?.data?.chapterList || [];
   if (!Array.isArray(list)) return [];
-  return list.map((ch, i) => ({
-    chapterId: String(ch.id || ""),
-    chapterIndex: Number(ch.index ?? i),
-    chapterName: ch.name || `EP ${i + 1}`,
-    indexStr: ch.indexStr || String(i + 1).padStart(3, "0"),
-    unlock: Boolean(ch.unlock),
-    duration: Number(ch.duration || 0),
-    mp4: ch.mp4 || "",
-    m3u8Url: ch.m3u8Url || "",
-    m3u8Flag: Boolean(ch.m3u8Flag),
-    cover: ch.cover || ""
-  })).filter(ep => ep.chapterId);
+  return list
+    .map((ch, i) => ({
+      chapterId: String(ch.id || ""),
+      chapterIndex: Number(ch.index ?? i),
+      chapterName: ch.name || `EP ${i + 1}`,
+      indexStr: ch.indexStr || String(i + 1).padStart(3, "0"),
+      unlock: Boolean(ch.unlock),
+      duration: Number(ch.duration || 0),
+      mp4: ch.mp4 || "",
+      m3u8Url: ch.m3u8Url || "",
+      m3u8Flag: Boolean(ch.m3u8Flag),
+      cover: ch.cover || ""
+    }))
+    .filter((ep) => ep.chapterId);
 }
 
-// ---------- Image proxy (fix gambar hilang / CORS / hotlink) ----------
-app.get("/img", async (req, res) => {
-  try {
-    const u = String(req.query.u || "");
-    if (!u || !/^https?:\/\//i.test(u)) return res.status(400).send("bad_url");
+// ---------- Image proxy (lebih tahan VPS / anti-hotlink / redirect / timeout) ----------
+function isHttpUrl(s) {
+  return /^https?:\/\//i.test(String(s || ""));
+}
 
-    const upstream = await fetch(u, { headers: { accept: "image/avif,image/webp,image/*,*/*" } });
-    if (!upstream.ok) return res.status(404).send("img_not_found");
+app.get("/img", async (req, res) => {
+  const u = String(req.query.u || "");
+  if (!u || !isHttpUrl(u)) return res.status(400).send("bad_url");
+
+  // (opsional tapi sangat disarankan) whitelist biar endpoint ini gak jadi open-proxy
+  // const allowedHosts = new Set(["hwztchapter.dramaboxdb.com"]);
+  // try {
+  //   const host = new URL(u).hostname;
+  //   if (!allowedHosts.has(host)) return res.status(403).send("forbidden_host");
+  // } catch {
+  //   return res.status(400).send("bad_url");
+  // }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const upstream = await fetch(u, {
+      signal: controller.signal,
+      redirect: "follow",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (PanStream Image Proxy)",
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        // sering dibutuhkan oleh CDN anti-hotlink:
+        "Referer": getBaseUrl(req) + "/",
+        "Accept-Language": "en-US,en;q=0.9,id;q=0.8"
+      }
+    });
+
+    // kalau upstream menolak, balikin status yang lebih masuk akal
+    if (upstream.status === 404) return res.status(404).send("img_not_found");
+    if (!upstream.ok) {
+      // 403/401/5xx dari upstream => 502 ke client (bad gateway)
+      console.error("IMG_UPSTREAM_ERR:", upstream.status, u);
+      return res.status(502).send(`upstream_${upstream.status}`);
+    }
 
     const ct = upstream.headers.get("content-type") || "image/jpeg";
     res.setHeader("Content-Type", ct);
-    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.setHeader("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800");
+
+    // streaming body (handle null body)
+    if (!upstream.body) return res.status(502).send("upstream_no_body");
     upstream.body.pipe(res);
-  } catch {
-    res.status(500).send("img_proxy_failed");
+  } catch (e) {
+    const msg = e?.name === "AbortError" ? "img_timeout" : "img_proxy_failed";
+    console.error("IMG_PROXY_ERR:", msg, e?.message || e, u);
+    res.status(502).send(msg);
+  } finally {
+    clearTimeout(timeout);
   }
 });
 
 // ---------- SEO robots + sitemap ----------
 app.get("/robots.txt", (req, res) => {
   const baseUrl = getBaseUrl(req);
-  res.type("text/plain").send(
-    `User-agent: *\nAllow: /\nSitemap: ${baseUrl}/sitemap.xml\n`
-  );
+  res.type("text/plain").send(`User-agent: *\nAllow: /\nSitemap: ${baseUrl}/sitemap.xml\n`);
 });
 
 app.get("/sitemap.xml", (req, res) => {
-  // sitemap basic (home + browse + search + static). detail/watch dynamic bisa ditambah jika mau crawl besar.
   const baseUrl = getBaseUrl(req);
-  const urls = [
-    `${baseUrl}/`,
-    `${baseUrl}/browse`,
-    `${baseUrl}/search`
-  ];
+  const urls = [`${baseUrl}/`, `${baseUrl}/browse`, `${baseUrl}/search`];
   res.type("application/xml").send(`<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${urls.map(u => `<url><loc>${u}</loc></url>`).join("\n")}
+${urls.map((u) => `<url><loc>${u}</loc></url>`).join("\n")}
 </urlset>`);
 });
 
@@ -240,7 +277,8 @@ app.get("/api/browse", async (req, res) => {
     const raw = await apiGet("/dubindo", { classify, page });
     const items = normalizeList(raw).map(normalizeCard);
     res.json({ classify, page, items });
-  } catch {
+  } catch (e) {
+    console.error("API_BROWSE_ERR:", e?.message || e);
     res.status(500).json({ error: "browse_failed" });
   }
 });
@@ -330,7 +368,6 @@ app.get("/watch/:bookId/:chapterId", async (req, res) => {
       bookId,
       chapterId,
       currentIndex: idx,
-      // prefer mp4. For iOS safari, m3u8 plays natively; for others we can add hls.js later.
       videoUrl: current.mp4 || "",
       hlsUrl: current.m3u8Flag ? (current.m3u8Url || "") : ""
     };
@@ -349,7 +386,7 @@ app.get("/watch/:bookId/:chapterId", async (req, res) => {
   }
 });
 
-// Player sources endpoint: use mp4/hls from detail chapterList
+// Player sources endpoint
 app.get("/api/sources", async (req, res) => {
   try {
     const bookId = String(req.query.bookId || "");
@@ -361,7 +398,6 @@ app.get("/api/sources", async (req, res) => {
     const ep = eps.find((x) => x.chapterId === chapterId);
     if (!ep) return res.status(404).json({ error: "episode_not_found" });
 
-    // build quality sources: mp4 (single) + hls if available
     const sources = [];
     if (ep.mp4) sources.push({ type: "mp4", quality: 720, url: ep.mp4, isDefault: true });
     if (ep.m3u8Flag && ep.m3u8Url) sources.push({ type: "hls", quality: 720, url: ep.m3u8Url, isDefault: false });
@@ -373,7 +409,8 @@ app.get("/api/sources", async (req, res) => {
       best: ep.mp4 || ep.m3u8Url || "",
       sources
     });
-  } catch {
+  } catch (e) {
+    console.error("SOURCES_ERR:", e?.message || e);
     res.status(500).json({ error: "sources_failed" });
   }
 });
