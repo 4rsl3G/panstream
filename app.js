@@ -3,7 +3,9 @@
    Features: SEO, sitemap/robots, browse infinite, custom player endpoints
    Fixes:
    - pageScript default
-   - cover list sometimes empty/invalid => normalize & repair using /detail
+   - popular search object -> string
+   - cover list inconsistent -> normalize & repair using /detail (cached)
+   - API timeout + loading page (wait for API data)
 */
 
 const path = require("path");
@@ -66,16 +68,27 @@ function baseMeta(req, opts = {}) {
   };
 }
 
-async function apiGet(endpoint, params = {}) {
+// ---------- API fetch with timeout ----------
+async function apiGet(endpoint, params = {}, timeoutMs = 12000) {
   const url = new URL(`${API_BASE}${endpoint}`);
   for (const [k, v] of Object.entries(params)) {
     if (v === undefined || v === null || v === "") continue;
     url.searchParams.set(k, String(v));
   }
 
-  const res = await fetch(url.toString(), { headers: { accept: "*/*" } });
-  if (!res.ok) throw new Error(`API ${endpoint} failed: ${res.status}`);
-  return res.json();
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(url.toString(), {
+      headers: { accept: "*/*" },
+      signal: controller.signal
+    });
+    if (!res.ok) throw new Error(`API ${endpoint} failed: ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 // list endpoints return array
@@ -86,13 +99,12 @@ function normalizeList(raw) {
   return [];
 }
 
-// ✅ Normalisasi URL cover/asset dari API (fix cover tanpa https / //domain)
+// ✅ Normalisasi URL cover/asset dari API
 function toAbsUrl(u) {
   const s = String(u || "").trim();
   if (!s) return "";
   if (/^https?:\/\//i.test(s)) return s;
   if (s.startsWith("//")) return "https:" + s;
-  // domain tanpa scheme: example.com/path
   if (/^[a-z0-9.-]+\.[a-z]{2,}\//i.test(s)) return "https://" + s;
   return s;
 }
@@ -107,20 +119,38 @@ function pickCover(item = {}) {
     item.coverURL ||
     item.image ||
     item.imageUrl ||
+    item.img ||
+    item.imgUrl ||
+    item.pic ||
+    item.picUrl ||
     item.poster ||
     item.posterUrl ||
     item.verticalCover ||
     item.verticalCoverUrl ||
+    item.bookCoverUrl ||
     ""
   );
 }
 
+// beberapa API kadang ngasih string cover yang aneh (bukan http)
+function isProbablyValidCover(u) {
+  const s = String(u || "").trim();
+  if (!s) return false;
+  // harus http/https
+  if (!/^https?:\/\//i.test(s)) return false;
+  // minimal mengandung "." dan "/" biar bukan string random
+  if (!s.includes(".") || !s.includes("/")) return false;
+  return true;
+}
+
 function normalizeCard(item = {}) {
   const coverRaw = pickCover(item);
+  const cover = toAbsUrl(coverRaw);
+
   return {
     bookId: String(item.bookId || item.id || ""),
     bookName: item.bookName || item.name || "",
-    cover: toAbsUrl(coverRaw),
+    cover: cover,
     introduction: item.introduction || item.desc || "",
     playCount: item.playCount || item.play || "",
     tags: Array.isArray(item.tags) ? item.tags : []
@@ -162,12 +192,31 @@ function buildEpisodesFromDetail(rawDetail) {
     .filter((ep) => ep.chapterId);
 }
 
-// ✅ repair: kalau cover list kosong/invalid, ambil cover dari /detail (dibatasi)
+// ---------- Tiny cache (RAM) for detail covers ----------
+const COVER_CACHE_TTL_MS = 10 * 60 * 1000; // 10 menit
+const coverCache = new Map(); // bookId -> { cover, exp }
+
+function cacheGetCover(bookId) {
+  const hit = coverCache.get(String(bookId));
+  if (!hit) return "";
+  if (Date.now() > hit.exp) {
+    coverCache.delete(String(bookId));
+    return "";
+  }
+  return hit.cover || "";
+}
+
+function cacheSetCover(bookId, cover) {
+  if (!bookId || !cover) return;
+  coverCache.set(String(bookId), { cover, exp: Date.now() + COVER_CACHE_TTL_MS });
+}
+
+// ✅ repair: kalau cover list kosong/invalid, ambil cover dari /detail (dibatasi & cached)
 async function fillMissingCovers(cards, limit = 12) {
   if (!Array.isArray(cards) || !cards.length) return cards;
 
   const need = cards
-    .filter((x) => x && x.bookId && (!x.cover || String(x.cover).trim() === ""))
+    .filter((x) => x && x.bookId && !isProbablyValidCover(x.cover))
     .slice(0, limit);
 
   if (!need.length) return cards;
@@ -175,9 +224,19 @@ async function fillMissingCovers(cards, limit = 12) {
   await Promise.all(
     need.map(async (c) => {
       try {
-        const raw = await apiGet("/detail", { bookId: c.bookId });
+        const cached = cacheGetCover(c.bookId);
+        if (cached) {
+          c.cover = cached;
+          return;
+        }
+
+        const raw = await apiGet("/detail", { bookId: c.bookId }, 12000);
         const det = normalizeDetailFromApi(raw);
-        if (det.bookCover) c.cover = det.bookCover;
+
+        if (isProbablyValidCover(det.bookCover)) {
+          c.cover = det.bookCover;
+          cacheSetCover(c.bookId, det.bookCover);
+        }
       } catch {
         // ignore
       }
@@ -185,6 +244,21 @@ async function fillMissingCovers(cards, limit = 12) {
   );
 
   return cards;
+}
+
+// ---------- Render loading page (wait API) ----------
+function renderLoading(res, req, title = "Loading") {
+  const meta = baseMeta(req, {
+    title,
+    description: "Sedang mengambil data dari server. Mohon tunggu…",
+    path: req.path
+  });
+
+  // membutuhkan views/pages/loading.ejs
+  return res.status(503).render("pages/loading", {
+    meta,
+    retryMs: 1200
+  });
 }
 
 // ---------- SEO robots + sitemap ----------
@@ -205,6 +279,7 @@ ${urls.map((u) => `<url><loc>${u}</loc></url>`).join("\n")}
 // ---------- Pages ----------
 app.get("/", async (req, res) => {
   try {
+    // ✅ tunggu semua API utama selesai
     const [latestRaw, trendingRaw, foryouRaw, randomRaw] = await Promise.all([
       apiGet("/latest"),
       apiGet("/trending"),
@@ -217,10 +292,10 @@ app.get("/", async (req, res) => {
     const foryou = normalizeList(foryouRaw).map(normalizeCard);
     const random = normalizeList(randomRaw).map(normalizeCard);
 
-    // ✅ repair covers (biar home gak "?" tapi detail bisa)
+    // ✅ repair covers (bisa berat, tapi sudah pakai cache + limit)
     await Promise.all([
-      fillMissingCovers(trending, 16),
-      fillMissingCovers(latest, 16),
+      fillMissingCovers(trending, 20),
+      fillMissingCovers(latest, 20),
       fillMissingCovers(foryou, 12),
       fillMissingCovers(random, 12)
     ]);
@@ -246,11 +321,10 @@ app.get("/", async (req, res) => {
       jsonLd
     });
 
-    res.render("pages/home", { meta, featured, latest, trending, foryou, random });
+    return res.render("pages/home", { meta, featured, latest, trending, foryou, random });
   } catch (e) {
     console.error("HOME_ERR:", e?.message || e);
-    const meta = baseMeta(req, { title: "Home", path: "/" });
-    res.render("pages/home", { meta, featured: null, latest: [], trending: [], foryou: [], random: [] });
+    return renderLoading(res, req, "Home");
   }
 });
 
@@ -263,7 +337,6 @@ app.get("/browse", async (req, res) => {
     const raw = await apiGet("/dubindo", { classify, page });
     const items = normalizeList(raw).map(normalizeCard);
 
-    // ✅ repair covers untuk grid (biar gak "?" )
     await fillMissingCovers(items, 24);
 
     const meta = baseMeta(req, {
@@ -272,11 +345,10 @@ app.get("/browse", async (req, res) => {
       path: "/browse"
     });
 
-    res.render("pages/browse", { meta, items, classify, page });
+    return res.render("pages/browse", { meta, items, classify, page });
   } catch (e) {
     console.error("BROWSE_ERR:", e?.message || e);
-    const meta = baseMeta(req, { title: "Browse", path: "/browse" });
-    res.render("pages/browse", { meta, items: [], classify, page });
+    return renderLoading(res, req, "Browse");
   }
 });
 
@@ -288,48 +360,61 @@ app.get("/api/browse", async (req, res) => {
     const raw = await apiGet("/dubindo", { classify, page });
     const items = normalizeList(raw).map(normalizeCard);
 
-    // ✅ optional repair covers untuk JSON juga (biar infinite scroll aman)
     await fillMissingCovers(items, 24);
 
-    res.json({ classify, page, items });
+    return res.json({ classify, page, items });
   } catch (e) {
     console.error("API_BROWSE_ERR:", e?.message || e);
-    res.status(500).json({ error: "browse_failed" });
+    return res.status(500).json({ error: "browse_failed" });
   }
 });
 
 app.get("/search", async (req, res) => {
-  const q = String(req.query.q || "");
-  const popularRaw = await apiGet("/populersearch").catch(() => []);
-  const popular = normalizeList(popularRaw).slice(0, 12);
+  const q = String(req.query.q || "").trim();
 
-  let items = [];
-  if (q.trim()) {
-    try {
-      const raw = await apiGet("/search", { query: q.trim() });
+  try {
+    // ✅ populer kadang string, kadang object
+    const popularRaw = await apiGet("/populersearch").catch(() => []);
+    const popularList = normalizeList(popularRaw);
+
+    const popular = popularList
+      .map((x) => {
+        if (typeof x === "string") return x;
+        return x?.keyword || x?.name || x?.title || x?.word || x?.query || "";
+      })
+      .filter(Boolean)
+      .slice(0, 12);
+
+    let items = [];
+    if (q) {
+      const raw = await apiGet("/search", { query: q });
       items = normalizeList(raw).map(normalizeCard);
       await fillMissingCovers(items, 24);
-    } catch {
-      items = [];
     }
+
+    const meta = baseMeta(req, {
+      title: q ? `Search: ${q}` : "Search",
+      description: q ? `Hasil pencarian ${q} di PanStream.` : "Cari drama favoritmu di PanStream.",
+      path: q ? `/search?q=${encodeURIComponent(q)}` : "/search"
+    });
+
+    return res.render("pages/search", { meta, q, items, popular });
+  } catch (e) {
+    console.error("SEARCH_ERR:", e?.message || e);
+    return renderLoading(res, req, "Search");
   }
-
-  const meta = baseMeta(req, {
-    title: q ? `Search: ${q}` : "Search",
-    description: q ? `Hasil pencarian ${q} di PanStream.` : "Cari drama favoritmu di PanStream.",
-    path: q ? `/search?q=${encodeURIComponent(q)}` : "/search"
-  });
-
-  res.render("pages/search", { meta, q, items, popular });
 });
 
 app.get("/detail/:bookId", async (req, res) => {
   const bookId = req.params.bookId;
 
   try {
-    const rawDetail = await apiGet("/detail", { bookId });
+    const rawDetail = await apiGet("/detail", { bookId }, 15000);
     const detail = normalizeDetailFromApi(rawDetail);
     const episodes = buildEpisodesFromDetail(rawDetail);
+
+    // cache cover detail untuk bantu halaman lain
+    if (isProbablyValidCover(detail.bookCover)) cacheSetCover(detail.bookId, detail.bookCover);
 
     const meta = baseMeta(req, {
       title: detail.bookName || "Detail",
@@ -346,10 +431,10 @@ app.get("/detail/:bookId", async (req, res) => {
       }
     });
 
-    res.render("pages/detail", { meta, detail, episodes });
+    return res.render("pages/detail", { meta, detail, episodes });
   } catch (e) {
     console.error("DETAIL_ERR:", e?.message || e);
-    res.status(404).render("pages/404", { meta: baseMeta(req, { title: "404", path: req.path }) });
+    return renderLoading(res, req, "Detail");
   }
 });
 
@@ -358,12 +443,14 @@ app.get("/watch/:bookId/:chapterId", async (req, res) => {
   const chapterId = String(req.params.chapterId || "");
 
   try {
-    const rawDetail = await apiGet("/detail", { bookId });
+    const rawDetail = await apiGet("/detail", { bookId }, 15000);
     const detail = normalizeDetailFromApi(rawDetail);
     const episodes = buildEpisodesFromDetail(rawDetail).map((ep) => ({
       ...ep,
       href: `/watch/${bookId}/${ep.chapterId}`
     }));
+
+    if (isProbablyValidCover(detail.bookCover)) cacheSetCover(detail.bookId, detail.bookCover);
 
     const idx = episodes.findIndex((x) => x.chapterId === chapterId);
     if (idx === -1) {
@@ -373,7 +460,6 @@ app.get("/watch/:bookId/:chapterId", async (req, res) => {
     }
 
     const current = episodes[idx];
-
     if (!current.unlock) {
       const firstUnlock = episodes.find((x) => x.unlock);
       if (!firstUnlock) throw new Error("No unlock episodes");
@@ -395,10 +481,10 @@ app.get("/watch/:bookId/:chapterId", async (req, res) => {
       image: detail.bookCover || undefined
     });
 
-    res.render("pages/watch", { meta, detail, episodes, player });
+    return res.render("pages/watch", { meta, detail, episodes, player });
   } catch (e) {
     console.error("WATCH_ERR:", e?.message || e);
-    res.status(404).render("pages/404", { meta: baseMeta(req, { title: "404", path: req.path }) });
+    return renderLoading(res, req, "Watch");
   }
 });
 
@@ -409,7 +495,7 @@ app.get("/api/sources", async (req, res) => {
     const chapterId = String(req.query.chapterId || "");
     if (!bookId || !chapterId) return res.status(400).json({ error: "missing_params" });
 
-    const rawDetail = await apiGet("/detail", { bookId });
+    const rawDetail = await apiGet("/detail", { bookId }, 15000);
     const eps = buildEpisodesFromDetail(rawDetail);
     const ep = eps.find((x) => x.chapterId === chapterId);
     if (!ep) return res.status(404).json({ error: "episode_not_found" });
@@ -418,7 +504,7 @@ app.get("/api/sources", async (req, res) => {
     if (ep.mp4) sources.push({ type: "mp4", quality: 720, url: ep.mp4, isDefault: true });
     if (ep.m3u8Flag && ep.m3u8Url) sources.push({ type: "hls", quality: 720, url: ep.m3u8Url, isDefault: false });
 
-    res.json({
+    return res.json({
       bookId,
       chapterId,
       unlock: ep.unlock,
@@ -427,7 +513,7 @@ app.get("/api/sources", async (req, res) => {
     });
   } catch (e) {
     console.error("SOURCES_ERR:", e?.message || e);
-    res.status(500).json({ error: "sources_failed" });
+    return res.status(500).json({ error: "sources_failed" });
   }
 });
 
