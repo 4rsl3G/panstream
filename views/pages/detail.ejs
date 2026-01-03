@@ -2,7 +2,12 @@
   <section class="grid lg:grid-cols-[360px,1fr] gap-10">
     <div data-aos="flip-left">
       <div class="pan-coverCard">
-        <img src="/img?u=<%= encodeURIComponent(detail.bookCover || '') %>" alt="<%= detail.bookName %>" loading="lazy"/>
+        <img
+          src="<%= detail.bookCover ? ('/img?u=' + encodeURIComponent(detail.bookCover)) : '/public/img/og.png' %>"
+          alt="<%= detail.bookName %>"
+          loading="lazy"
+          onerror="this.onerror=null;this.src='/public/img/og.png';"
+        />
       </div>
 
       <div class="mt-5 flex gap-2 flex-wrap">
@@ -14,10 +19,15 @@
       <% if ((detail.performers || []).length) { %>
         <div class="mt-8 border-t border-white/10 pt-6">
           <div class="tracking-[0.35em] uppercase text-xs opacity-70">Performers</div>
+
           <div class="mt-4 grid grid-cols-2 gap-3">
             <% detail.performers.slice(0,4).forEach(p => { %>
               <div class="pan-miniCard">
-                <img src="/img?u=<%= encodeURIComponent(p.performerAvatar || '') %>" class="pan-miniAvatar" />
+                <img
+                  src="<%= p.performerAvatar ? ('/img?u=' + encodeURIComponent(p.performerAvatar)) : '/public/img/og.png' %>"
+                  class="pan-miniAvatar"
+                  onerror="this.onerror=null;this.src='/public/img/og.png';"
+                />
                 <div class="min-w-0">
                   <div class="text-sm opacity-90 truncate"><%= p.performerName %></div>
                   <div class="text-xs opacity-60"><%= p.videoCount %> videos</div>
