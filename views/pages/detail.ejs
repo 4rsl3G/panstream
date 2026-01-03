@@ -3,7 +3,7 @@
     <div data-aos="flip-left">
       <div class="pan-coverCard">
         <img
-          src="<%= detail.bookCover ? ('/img?u=' + encodeURIComponent(detail.bookCover)) : '/public/img/og.png' %>"
+          src="<%= detail.bookCover || '/public/img/og.png' %>"
           alt="<%= detail.bookName %>"
           loading="lazy"
           onerror="this.onerror=null;this.src='/public/img/og.png';"
@@ -24,7 +24,7 @@
             <% detail.performers.slice(0,4).forEach(p => { %>
               <div class="pan-miniCard">
                 <img
-                  src="<%= p.performerAvatar ? ('/img?u=' + encodeURIComponent(p.performerAvatar)) : '/public/img/og.png' %>"
+                  src="<%= (p.performerAvatar || '') || '/public/img/og.png' %>"
                   class="pan-miniAvatar"
                   onerror="this.onerror=null;this.src='/public/img/og.png';"
                 />
