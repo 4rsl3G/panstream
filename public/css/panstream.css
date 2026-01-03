@@ -272,36 +272,77 @@ body.pan-body{
 .pan-epLocked:hover{ transform:none; background: rgba(255,255,255,.02); }
 
 /* player */
+/* ====== CHANGED: player dibuat full responsive + support vertical ====== */
 .pan-playerShell{
   position:relative;
   border:1px solid var(--line);
-  border-radius: 26px;
+  border-radius: 22px;
   overflow:hidden;
   background: rgba(255,255,255,.02);
   box-shadow: var(--shadow);
+
+  /* responsive sizing */
+  width: 100%;
+  margin: 0 auto;
+  transform: translateZ(0);
 }
+
+/* default: horizontal 16:9 */
 .pan-video{
   width:100%;
-  height: auto;
+  height:auto;
   aspect-ratio: 16 / 9;
-  background: #000;
+  background:#000;
   display:block;
+  object-fit: contain;
 }
+
+/* vertical mode: add .is-vertical on shell */
+.pan-playerShell.is-vertical .pan-video{
+  aspect-ratio: 9 / 16;
+  height: auto;
+  object-fit: contain;
+}
+
+/* vertical mode: limit height on desktop so it doesn't become too tall */
+@media (min-width: 1024px){
+  .pan-playerShell.is-vertical{
+    max-width: 420px; /* feel premium like reels */
+  }
+}
+
+/* fullscreen behavior */
+.pan-playerShell:fullscreen{
+  border-radius: 0;
+  border: none;
+  box-shadow:none;
+  background:#000;
+}
+.pan-playerShell:fullscreen .pan-video{
+  width:100%;
+  height:100%;
+  aspect-ratio:auto;
+  object-fit: contain;
+}
+
+/* watermark */
 .pan-playerWatermark{
   position:absolute;
-  top: 16px; left: 16px;
+  top: 14px; left: 14px;
   padding: 8px 10px;
   border-radius: 999px;
   border:1px solid rgba(255,255,255,.12);
   background: rgba(0,0,0,.28);
   backdrop-filter: blur(8px);
   font-size: 11px;
-  letter-spacing: .35em;
+  letter-spacing: .28em;
   text-transform: uppercase;
   opacity: .9;
   z-index: 15;
   pointer-events:none;
 }
+
+/* loader overlay */
 .pan-playerLoader{
   position:absolute; inset:0;
   display:none;
@@ -309,55 +350,92 @@ body.pan-body{
   flex-direction:column;
   gap:14px;
   z-index: 20;
-  background: rgba(0,0,0,.35);
+  background: rgba(0,0,0,.40);
   backdrop-filter: blur(6px);
 }
 .pan-playerLoader.is-show{ display:flex; }
 
+/* controls overlay */
 .pan-controls{
   position:absolute;
   left:0; right:0; bottom:0;
-  padding: 12px 12px 14px;
-  display:flex; gap:10px; align-items:center;
+  padding: 12px 12px calc(14px + env(safe-area-inset-bottom));
+  display:flex;
+  flex-wrap: wrap;              /* key: wrap supaya muat semua device */
+  gap:10px;
+  align-items:center;
   z-index: 18;
-  background: linear-gradient(to top, rgba(0,0,0,.72), rgba(0,0,0,0));
+  background: linear-gradient(to top, rgba(0,0,0,.78), rgba(0,0,0,0));
 }
+
+/* buttons */
 .pan-ctl{
   width:44px; height:44px;
   border-radius: 14px;
   border:1px solid rgba(255,255,255,.12);
-  background: rgba(0,0,0,.25);
+  background: rgba(0,0,0,.28);
   color: white;
   display:grid; place-items:center;
+  flex: 0 0 auto;
 }
-.pan-progress{ flex:1; min-width: 160px; }
+
+/* progress takes full row when needed */
+.pan-progress{
+  flex: 1 1 280px;              /* key: flexible */
+  min-width: 160px;
+}
+
+/* track: bigger touch target */
 .pan-progressTrack{
   position:relative;
-  height: 10px;
+  height: 12px;
   border-radius: 999px;
   border:1px solid rgba(255,255,255,.12);
   background: rgba(255,255,255,.08);
   cursor:pointer;
+  overflow:hidden;
 }
+
+/* fill */
 .pan-progressFill{
   position:absolute; left:0; top:0; height:100%;
   width:0%;
-  background: rgba(201,179,122,.75);
+  background: rgba(201,179,122,.78);
   border-radius: 999px;
 }
+
+/* knob */
 .pan-progressKnob{
   position:absolute; top:50%;
-  width: 16px; height: 16px;
+  width: 18px; height: 18px;
   border-radius: 999px;
   border: 1px solid rgba(255,255,255,.22);
-  background: rgba(0,0,0,.25);
+  background: rgba(0,0,0,.30);
   transform: translate(-50%, -50%);
   left: 0%;
+  box-shadow: 0 10px 24px rgba(0,0,0,.55);
 }
-.pan-time{ display:flex; justify-content:space-between; margin-top:8px; font-size:12px; opacity:.75; }
-.pan-vol{ width:110px; }
+
+/* time row */
+.pan-time{
+  display:flex;
+  justify-content:space-between;
+  margin-top:8px;
+  font-size:12px;
+  opacity:.78;
+  width: 100%;
+  flex: 1 1 100%;               /* key: always full width */
+}
+
+/* volume */
+.pan-vol{
+  width:120px;
+  flex: 0 0 auto;
+}
 .pan-vol input{ width:100%; }
-.pan-menu{ position:relative; }
+
+/* quality dropdown */
+.pan-menu{ position:relative; flex: 0 0 auto; }
 .pan-menuDrop{
   position:absolute;
   right:0; bottom:54px;
@@ -368,6 +446,7 @@ body.pan-body{
   backdrop-filter: blur(10px);
   padding: 8px;
   display:none;
+  box-shadow: 0 18px 60px rgba(0,0,0,.55);
 }
 .pan-menuDrop.is-open{ display:block; }
 .pan-qItem{
@@ -381,6 +460,30 @@ body.pan-body{
   text-align:left;
 }
 .pan-qItem:hover{ background: rgba(255,255,255,.05); }
+
+/* vertical mode: controls spacing slightly tighter */
+.pan-playerShell.is-vertical .pan-controls{
+  padding: 10px 10px calc(12px + env(safe-area-inset-bottom));
+  gap: 8px;
+}
+.pan-playerShell.is-vertical .pan-ctl{
+  width:42px; height:42px;
+}
+
+/* mobile: more compact and safe */
+@media (max-width: 640px){
+  .pan-controls{
+    padding: 10px 10px calc(12px + env(safe-area-inset-bottom));
+    gap: 8px;
+  }
+  .pan-ctl{
+    width:42px; height:42px;
+    border-radius: 14px;
+  }
+  .pan-progress{ flex-basis: 200px; min-width: 120px; }
+  .pan-progressTrack{ height: 14px; }
+  .pan-progressKnob{ width: 20px; height: 20px; }
+}
 
 /* watch right side ep list */
 .pan-epList{
