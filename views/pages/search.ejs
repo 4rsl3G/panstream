@@ -24,12 +24,17 @@
       <% (items || []).forEach((d, i) => { %>
         <a href="/detail/<%= d.bookId %>" class="pan-gridCard" data-aos="zoom-in" data-aos-delay="<%= Math.min(240, i*10) %>">
           <div class="pan-gridPoster">
-            <img loading="lazy" src="/img?u=<%= encodeURIComponent(d.cover || '') %>" alt="<%= d.bookName %>"/>
+            <img
+              loading="lazy"
+              src="<%= d.cover || '/public/img/og.png' %>"
+              alt="<%= d.bookName %>"
+              onerror="this.onerror=null;this.src='/public/img/og.png';"
+            />
             <div class="pan-gridShade"></div>
           </div>
           <div class="pan-gridMeta">
             <div class="pan-gridTitle"><%= d.bookName %></div>
-            <div class="pan-gridSub"><%= d.playCount || "" %></div>
+            <div class="pan-gridSub"><%= d.playCount || '' %></div>
           </div>
         </a>
       <% }) %>
