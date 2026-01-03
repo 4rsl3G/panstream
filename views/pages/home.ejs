@@ -3,7 +3,7 @@
     <% if (featured) { %>
       <div class="pan-heroBg">
         <img
-          src="<%= featured.cover ? ('/img?u=' + encodeURIComponent(featured.cover)) : '/public/img/og.png' %>"
+          src="<%= featured.cover || '/public/img/og.png' %>"
           alt=""
           onerror="this.onerror=null;this.src='/public/img/og.png';"
         />
