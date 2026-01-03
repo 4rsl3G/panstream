@@ -1,11 +1,10 @@
-/* PanStream — VPS build (FINAL, NO IMAGE PROXY)
+/* PanStream — VPS build (FINAL, NO IMAGE PROXY) — REALTIME API
    Backend: Node.js + Express + EJS Layouts
-   Features: SEO, sitemap/robots, browse infinite, custom player endpoints
-   Fixes:
-   - pageScript default
-   - popular search object -> string
-   - cover list inconsistent -> normalize & repair using /detail (cached)
-   - API timeout + loading page (wait for API data)
+   Fixes / Updates for your API response:
+   - Support coverWap (main cover field)
+   - playCount fallback from rankVo.hotCode
+   - keep chapterCount, corner, shelfTime, tagV3s
+   - sources endpoint returns {label,url} for your player.js
 */
 
 const path = require("path");
@@ -13,6 +12,9 @@ const express = require("express");
 const compression = require("compression");
 const morgan = require("morgan");
 const ejsLayouts = require("express-ejs-layouts");
+
+// Node 18+ has global fetch. If not, uncomment next line:
+// const fetch = require("node-fetch");
 
 const app = express();
 
@@ -96,6 +98,7 @@ function normalizeList(raw) {
   if (Array.isArray(raw)) return raw;
   if (Array.isArray(raw?.data)) return raw.data;
   if (Array.isArray(raw?.list)) return raw.list;
+  if (Array.isArray(raw?.items)) return raw.items;
   return [];
 }
 
@@ -110,8 +113,10 @@ function toAbsUrl(u) {
 }
 
 // ✅ cover list kadang pakai key beda
+// >>> IMPORTANT: added coverWap from your response
 function pickCover(item = {}) {
   return (
+    item.coverWap || // ✅ from your API response
     item.bookCover ||
     item.cover ||
     item.book_cover ||
@@ -136,58 +141,87 @@ function pickCover(item = {}) {
 function isProbablyValidCover(u) {
   const s = String(u || "").trim();
   if (!s) return false;
-  // harus http/https
   if (!/^https?:\/\//i.test(s)) return false;
-  // minimal mengandung "." dan "/" biar bukan string random
   if (!s.includes(".") || !s.includes("/")) return false;
   return true;
 }
 
+// ✅ normalizeCard adjusted to your response:
+// - playCount might be in playCount OR rankVo.hotCode (ex "1.1M")
+// - keep chapterCount, corner, shelfTime, tagV3s
 function normalizeCard(item = {}) {
   const coverRaw = pickCover(item);
   const cover = toAbsUrl(coverRaw);
 
+  const playCount =
+    item.playCount ||
+    item.play ||
+    item.rankVo?.hotCode || // ✅ from trending response
+    "";
+
   return {
     bookId: String(item.bookId || item.id || ""),
     bookName: item.bookName || item.name || "",
-    cover: cover,
+    cover,
     introduction: item.introduction || item.desc || "",
-    playCount: item.playCount || item.play || "",
-    tags: Array.isArray(item.tags) ? item.tags : []
+    playCount: String(playCount || ""),
+    chapterCount: Number(item.chapterCount || 0),
+    tags: Array.isArray(item.tags) ? item.tags : [],
+    tagV3s: Array.isArray(item.tagV3s) ? item.tagV3s : [],
+    corner: item.corner || null,
+    shelfTime: item.shelfTime || "",
+    protagonist: item.protagonist || ""
   };
 }
 
 // detail endpoint format: { data: { book: {...}, chapterList: [...] } }
+// ✅ also accept coverWap fields if your detail returns them
 function normalizeDetailFromApi(raw) {
-  const book = raw?.data?.book || raw?.book || {};
+  const book = raw?.data?.book || raw?.book || raw?.data || {};
+  const coverRaw =
+    book.coverWap ||
+    book.cover ||
+    book.bookCover ||
+    book.bookCoverUrl ||
+    book.coverUrl ||
+    "";
+
   return {
-    bookId: String(book.bookId || ""),
-    bookName: book.bookName || "",
-    bookCover: toAbsUrl(book.cover || book.bookCover || ""),
-    introduction: book.introduction || "",
+    bookId: String(book.bookId || book.id || ""),
+    bookName: book.bookName || book.name || "",
+    bookCover: toAbsUrl(coverRaw),
+    introduction: book.introduction || book.desc || "",
     viewCount: Number(book.viewCount || 0),
     followCount: Number(book.followCount || 0),
-    totalChapterNum: Number(book.chapterCount || 0),
+    totalChapterNum: Number(book.chapterCount || book.chapterCountNum || 0),
     tags: Array.isArray(book.tags) ? book.tags : (Array.isArray(book.labels) ? book.labels : []),
+    tagV3s: Array.isArray(book.tagV3s) ? book.tagV3s : [],
     performers: Array.isArray(book.performerList) ? book.performerList : []
   };
 }
 
 function buildEpisodesFromDetail(rawDetail) {
-  const list = rawDetail?.data?.chapterList || [];
+  const list =
+    rawDetail?.data?.chapterList ||
+    rawDetail?.chapterList ||
+    rawDetail?.data?.chapters ||
+    rawDetail?.chapters ||
+    [];
+
   if (!Array.isArray(list)) return [];
+
   return list
     .map((ch, i) => ({
-      chapterId: String(ch.id || ""),
+      chapterId: String(ch.id || ch.chapterId || ""),
       chapterIndex: Number(ch.index ?? i),
-      chapterName: ch.name || `EP ${i + 1}`,
+      chapterName: ch.name || ch.chapterName || `EP ${i + 1}`,
       indexStr: ch.indexStr || String(i + 1).padStart(3, "0"),
       unlock: Boolean(ch.unlock),
       duration: Number(ch.duration || 0),
-      mp4: ch.mp4 || "",
-      m3u8Url: ch.m3u8Url || "",
-      m3u8Flag: Boolean(ch.m3u8Flag),
-      cover: toAbsUrl(ch.cover || "")
+      mp4: ch.mp4 || ch.mp4Url || ch.videoUrl || "",
+      m3u8Url: ch.m3u8Url || ch.hlsUrl || "",
+      m3u8Flag: Boolean(ch.m3u8Flag || ch.hlsFlag),
+      cover: toAbsUrl(ch.cover || ch.coverWap || "")
     }))
     .filter((ep) => ep.chapterId);
 }
@@ -254,7 +288,6 @@ function renderLoading(res, req, title = "Loading") {
     path: req.path
   });
 
-  // membutuhkan views/pages/loading.ejs
   return res.status(503).render("pages/loading", {
     meta,
     retryMs: 1200
@@ -279,10 +312,9 @@ ${urls.map((u) => `<url><loc>${u}</loc></url>`).join("\n")}
 // ---------- Pages ----------
 app.get("/", async (req, res) => {
   try {
-    // ✅ tunggu semua API utama selesai
     const [latestRaw, trendingRaw, foryouRaw, randomRaw] = await Promise.all([
       apiGet("/latest"),
-      apiGet("/trending"),
+      apiGet("/trending"),     // ✅ response kamu: array bookId/bookName/coverWap/rankVo.hotCode...
       apiGet("/foryou"),
       apiGet("/randomdrama")
     ]);
@@ -292,7 +324,7 @@ app.get("/", async (req, res) => {
     const foryou = normalizeList(foryouRaw).map(normalizeCard);
     const random = normalizeList(randomRaw).map(normalizeCard);
 
-    // ✅ repair covers (bisa berat, tapi sudah pakai cache + limit)
+    // repair covers (cached + limit)
     await Promise.all([
       fillMissingCovers(trending, 20),
       fillMissingCovers(latest, 20),
@@ -334,6 +366,8 @@ app.get("/browse", async (req, res) => {
   const page = Number(req.query.page || 1);
 
   try {
+    // ✅ kamu pakai endpoint /dubindo untuk list browse
+    // response kamu: array bookId/bookName/coverWap/playCount/corner...
     const raw = await apiGet("/dubindo", { classify, page });
     const items = normalizeList(raw).map(normalizeCard);
 
@@ -357,6 +391,7 @@ app.get("/api/browse", async (req, res) => {
   try {
     const classify = String(req.query.classify || "terbaru");
     const page = Number(req.query.page || 1);
+
     const raw = await apiGet("/dubindo", { classify, page });
     const items = normalizeList(raw).map(normalizeCard);
 
@@ -373,7 +408,6 @@ app.get("/search", async (req, res) => {
   const q = String(req.query.q || "").trim();
 
   try {
-    // ✅ populer kadang string, kadang object
     const popularRaw = await apiGet("/populersearch").catch(() => []);
     const popularList = normalizeList(popularRaw);
 
@@ -413,7 +447,6 @@ app.get("/detail/:bookId", async (req, res) => {
     const detail = normalizeDetailFromApi(rawDetail);
     const episodes = buildEpisodesFromDetail(rawDetail);
 
-    // cache cover detail untuk bantu halaman lain
     if (isProbablyValidCover(detail.bookCover)) cacheSetCover(detail.bookId, detail.bookCover);
 
     const meta = baseMeta(req, {
@@ -466,6 +499,8 @@ app.get("/watch/:bookId/:chapterId", async (req, res) => {
       return res.redirect(firstUnlock.href);
     }
 
+    // ✅ player config matching your public/js/player.js
+    // You prefer mp4, but also allow hls.
     const player = {
       bookId,
       chapterId,
@@ -488,7 +523,8 @@ app.get("/watch/:bookId/:chapterId", async (req, res) => {
   }
 });
 
-// Player sources endpoint
+// Player sources endpoint (for your player.js quality menu)
+// ✅ IMPORTANT: return {label,url} not {type,quality}
 app.get("/api/sources", async (req, res) => {
   try {
     const bookId = String(req.query.bookId || "");
@@ -501,8 +537,8 @@ app.get("/api/sources", async (req, res) => {
     if (!ep) return res.status(404).json({ error: "episode_not_found" });
 
     const sources = [];
-    if (ep.mp4) sources.push({ type: "mp4", quality: 720, url: ep.mp4, isDefault: true });
-    if (ep.m3u8Flag && ep.m3u8Url) sources.push({ type: "hls", quality: 720, url: ep.m3u8Url, isDefault: false });
+    if (ep.mp4) sources.push({ label: "MP4", url: ep.mp4 });
+    if (ep.m3u8Flag && ep.m3u8Url) sources.push({ label: "HLS", url: ep.m3u8Url });
 
     return res.json({
       bookId,
