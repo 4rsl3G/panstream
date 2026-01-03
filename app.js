@@ -1,3 +1,15 @@
+/* PanStream — Server (Shortmax API)
+   Backend: Node.js + Express + EJS Layouts
+   Notes:
+   - Token API disimpan di server (env SHORTMAX_TOKEN), tidak dikirim ke browser.
+   - Endpoint JSON untuk client:
+     /api/languages
+     /api/home?lang=en
+     /api/search?q=love&lang=en
+     /api/episodes/:code?lang=en
+     /api/play/:code?lang=en&ep=1
+*/
+
 const path = require("path");
 const express = require("express");
 const compression = require("compression");
@@ -8,9 +20,19 @@ const axios = require("axios");
 const app = express();
 
 const PORT = process.env.PORT || 3000;
+
 const SITE_NAME = "PanStream";
 const SITE_TAGLINE = "Luxury streaming experience";
-const API_BASE = "https://api.sansekai.my.id/api/dramabox";
+
+const API_BASE = "https://sapimu.au/shortmax/api/v1";
+const API_TOKEN = process.env.SHORTMAX_TOKEN || "";
+
+// ====== Basic guards ======
+if (!API_TOKEN) {
+  console.warn(
+    "[WARN] SHORTMAX_TOKEN belum diset. Endpoint /api/* akan mengembalikan error."
+  );
+}
 
 // ---------- App setup ----------
 app.disable("x-powered-by");
@@ -24,7 +46,7 @@ app.use(morgan("dev"));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// default locals
+// Default locals untuk layout (hindari 'pageScript is not defined')
 app.use((req, res, next) => {
   res.locals.pageScript = null;
   next();
@@ -59,21 +81,13 @@ function baseMeta(req, opts = {}) {
   const image = opts.image || `${baseUrl}/public/img/og.png`;
   const jsonLd = opts.jsonLd || null;
 
-  return {
-    siteName: SITE_NAME,
-    tagline: SITE_TAGLINE,
-    title,
-    description,
-    url,
-    image,
-    jsonLd,
-  };
+  return { siteName: SITE_NAME, tagline: SITE_TAGLINE, title, description, url, image, jsonLd };
 }
 
 function previewBody(data) {
   try {
-    if (typeof data === "string") return data.slice(0, 200);
-    return JSON.stringify(data).slice(0, 200);
+    if (typeof data === "string") return data.slice(0, 240);
+    return JSON.stringify(data).slice(0, 240);
   } catch {
     return "";
   }
@@ -81,7 +95,7 @@ function previewBody(data) {
 
 function upstreamHeaders(req) {
   const base =
-    req?.headers?.host ? `https://${req.headers.host}` : "https://pansa.my.id";
+    req?.headers?.host ? `https://${req.headers.host}` : "https://localhost";
   return {
     Accept: "application/json, text/plain, */*",
     "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -90,136 +104,71 @@ function upstreamHeaders(req) {
     Referer: base + "/",
     Origin: base,
     Connection: "keep-alive",
+    Authorization: `Bearer ${API_TOKEN}`,
   };
 }
 
+// Small in-memory cache (TTL mengikuti 'ttl' dari response kalau ada)
+const memCache = new Map(); // key -> { exp:number, value:any }
+function cacheGet(key) {
+  const hit = memCache.get(key);
+  if (!hit) return null;
+  if (Date.now() > hit.exp) {
+    memCache.delete(key);
+    return null;
+  }
+  return hit.value;
+}
+function cacheSet(key, value, ttlSec) {
+  const ttl = Math.max(1, Number(ttlSec || 0)) * 1000;
+  memCache.set(key, { exp: Date.now() + ttl, value });
+}
+
 async function safeApiGet(req, endpoint, params = {}, timeoutMs = 45000) {
+  if (!API_TOKEN) {
+    return { ok: false, status: 500, data: null, error: "missing_token" };
+  }
+
+  const url = API_BASE + endpoint;
   try {
-    const resp = await axios.get(API_BASE + endpoint, {
+    const resp = await axios.get(url, {
       params,
       headers: upstreamHeaders(req),
       timeout: timeoutMs,
       validateStatus: () => true,
     });
 
+    // API baru biasanya balikin { data, cached, ttl }
     if (resp.status < 200 || resp.status >= 300) {
       console.error(
         `UPSTREAM_FAIL ${endpoint}:`,
         resp.status,
         previewBody(resp.data)
       );
-      return null;
+      return { ok: false, status: resp.status, data: null, error: "upstream_fail" };
     }
 
-    return resp.data;
+    return { ok: true, status: resp.status, data: resp.data, error: null };
   } catch (e) {
     console.error(`UPSTREAM_ERR ${endpoint}:`, e?.message || e);
-    return null;
+    return { ok: false, status: 500, data: null, error: "upstream_error" };
   }
 }
 
-// list endpoints return array
-function normalizeList(raw) {
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw;
-  if (Array.isArray(raw?.data)) return raw.data;
-  if (Array.isArray(raw?.list)) return raw.list;
-  if (Array.isArray(raw?.items)) return raw.items;
-  return [];
-}
-
-function toAbsUrl(u) {
-  const s = String(u || "").trim();
-  if (!s) return "";
-  if (/^https?:\/\//i.test(s)) return s;
-  if (s.startsWith("//")) return "https:" + s;
-  if (/^[a-z0-9.-]+\.[a-z]{2,}\//i.test(s)) return "https://" + s;
-  return s;
-}
-
-function pickCover(item = {}) {
-  return (
-    item.coverWap ||
-    item.cover ||
-    item.bookCover ||
-    item.book_cover ||
-    item.coverUrl ||
-    item.coverURL ||
-    item.image ||
-    item.imageUrl ||
-    item.img ||
-    item.imgUrl ||
-    item.pic ||
-    item.picUrl ||
-    item.poster ||
-    item.posterUrl ||
-    item.verticalCover ||
-    item.verticalCoverUrl ||
-    item.bookCoverUrl ||
-    ""
-  );
-}
-
-function normalizeCard(item = {}) {
+// Normalize model supaya UI lama bisa dipakai
+function normalizeShow(item = {}) {
   return {
-    bookId: String(item.bookId || item.id || ""),
-    bookName: item.bookName || item.name || "",
-    cover: toAbsUrl(pickCover(item)),
-    introduction: item.introduction || item.desc || "",
-    playCount: item.playCount || item.play || "",
+    id: Number(item.id || 0),
+    code: Number(item.code || 0),
+    name: item.name || "",
+    cover: item.cover || "",
+    episodes: Number(item.episodes || 0),
+    views: Number(item.views || 0),
+    favorites: Number(item.favorites || 0),
+    summary: item.summary || "",
     tags: Array.isArray(item.tags) ? item.tags : [],
-    corner: item.corner || null,
-    chapterCount: Number(item.chapterCount || 0),
-    shelfTime: item.shelfTime || item.shelf_time || "",
+    tagline: item.tagline || "",
   };
-}
-
-function normalizeDetailFromApi(raw) {
-  const book = raw?.data?.book || raw?.book || {};
-  return {
-    bookId: String(book.bookId || ""),
-    bookName: book.bookName || "",
-    cover: toAbsUrl(book.cover || ""),
-    viewCount: Number(book.viewCount || 0),
-    followCount: Number(book.followCount || 0),
-    introduction: book.introduction || "",
-    chapterCount: Number(book.chapterCount || 0),
-    tags: Array.isArray(book.tags)
-      ? book.tags
-      : Array.isArray(book.labels)
-      ? book.labels
-      : [],
-    labels: Array.isArray(book.labels) ? book.labels : [],
-    typeTwoName: book.typeTwoName || "",
-    language: book.simpleLanguage || book.language || "",
-    shelfTime: book.shelfTime || "",
-    performers: Array.isArray(book.performerList) ? book.performerList : [],
-    recommends: Array.isArray(raw?.data?.recommends)
-      ? raw.data.recommends.map(normalizeCard)
-      : [],
-  };
-}
-
-function buildEpisodesFromDetail(rawDetail) {
-  const list = rawDetail?.data?.chapterList || [];
-  if (!Array.isArray(list)) return [];
-  return list
-    .map((ch, i) => ({
-      chapterId: String(ch.id || ""),
-      chapterName: ch.name || `EP ${i + 1}`,
-      chapterIndex: Number(ch.index ?? i),
-      indexStr: ch.indexStr || String(i + 1).padStart(3, "0"),
-      unlock: Boolean(ch.unlock),
-      duration: Number(ch.duration || 0),
-      mp4: ch.mp4 || "",
-      m3u8Url: ch.m3u8Url || "",
-      m3u8Flag: Boolean(ch.m3u8Flag),
-      cover: toAbsUrl(ch.cover || ""),
-      utime: ch.utime || "",
-      chapterPrice: Number(ch.chapterPrice || 0),
-      isNew: Boolean(ch.new),
-    }))
-    .filter((ep) => ep.chapterId);
 }
 
 // ---------- SEO robots + sitemap ----------
@@ -240,16 +189,15 @@ ${urls.map((u) => `<url><loc>${u}</loc></url>`).join("\n")}
 });
 
 // ============================================================================
-// PAGES (SHELL ONLY) — render cepat, data diisi client
-// NOTE: pageScript path harus BENAR: "/public/js/xxx.js"
+// PAGES (shell) — render cepat, data diisi client
+// IMPORTANT: pageScript harus path valid, jangan double prefix
 // ============================================================================
 
 app.get("/", (req, res) => {
   res.locals.pageScript = "/public/js/home.js";
   const meta = baseMeta(req, {
     title: "Home",
-    description:
-      "PanStream — streaming drama dengan tampilan super mewah, cepat, dan responsif.",
+    description: "PanStream — streaming dengan tampilan mewah, cepat, dan responsif.",
     path: "/",
     jsonLd: {
       "@context": "https://schema.org",
@@ -264,217 +212,205 @@ app.get("/", (req, res) => {
     },
   });
 
-  return res.render("pages/home", {
-    meta,
-    shell: true,
-    items: [],
-    popular: [],
-    apiBase: API_BASE,
-  });
+  return res.render("pages/home", { meta, shell: true });
 });
 
 app.get("/browse", (req, res) => {
   res.locals.pageScript = "/public/js/browse.js";
-
-  const classify = String(req.query.classify || "terbaru");
-  const page = Number(req.query.page || 1);
+  const lang = String(req.query.lang || "en");
 
   const meta = baseMeta(req, {
     title: "Browse",
-    description: "Browse koleksi drama PanStream dengan lazy scroll dan efek mewah.",
+    description: "Browse koleksi drama PanStream.",
     path: "/browse",
   });
 
-  return res.render("pages/browse", {
-    meta,
-    shell: true,
-    classify,
-    page,
-    items: [],
-    apiBase: API_BASE,
-  });
+  return res.render("pages/browse", { meta, shell: true, lang });
 });
 
 app.get("/search", (req, res) => {
   res.locals.pageScript = "/public/js/search.js";
   const q = String(req.query.q || "").trim();
+  const lang = String(req.query.lang || "en");
 
   const meta = baseMeta(req, {
     title: q ? `Search: ${q}` : "Search",
-    description: q ? `Hasil pencarian ${q} di PanStream.` : "Cari drama favoritmu di PanStream.",
-    path: q ? `/search?q=${encodeURIComponent(q)}` : "/search",
+    description: q ? `Hasil pencarian ${q}.` : "Cari judul favoritmu.",
+    path: q ? `/search?q=${encodeURIComponent(q)}&lang=${encodeURIComponent(lang)}` : "/search",
   });
 
-  return res.render("pages/search", {
-    meta,
-    shell: true,
-    q,
-    items: [],
-    popular: [],
-    apiBase: API_BASE,
-  });
+  return res.render("pages/search", { meta, shell: true, q, lang });
 });
 
-app.get("/detail/:bookId", (req, res) => {
+app.get("/detail/:code", (req, res) => {
   res.locals.pageScript = "/public/js/detail.js";
-  const bookId = String(req.params.bookId || "");
+  const code = String(req.params.code || "");
+  const lang = String(req.query.lang || "en");
 
   const meta = baseMeta(req, {
     title: "Detail",
-    description: "Memuat detail drama…",
-    path: `/detail/${bookId}`,
+    description: "Memuat detail…",
+    path: `/detail/${encodeURIComponent(code)}`,
   });
 
-  return res.render("pages/detail", {
-    meta,
-    shell: true,
-    bookId,
-    items: [],
-    apiBase: API_BASE,
-  });
+  return res.render("pages/detail", { meta, shell: true, code, lang });
 });
 
-app.get("/watch/:bookId/:chapterId", (req, res) => {
+app.get("/watch/:code/:ep", (req, res) => {
   res.locals.pageScript = "/public/js/player.js";
-  const bookId = String(req.params.bookId || "");
-  const chapterId = String(req.params.chapterId || "");
+  const code = String(req.params.code || "");
+  const ep = String(req.params.ep || "1");
+  const lang = String(req.query.lang || "en");
 
   const meta = baseMeta(req, {
     title: "Watch",
     description: "Memuat video…",
-    path: `/watch/${bookId}/${chapterId}`,
+    path: `/watch/${encodeURIComponent(code)}/${encodeURIComponent(ep)}`,
   });
 
-  return res.render("pages/watch", {
-    meta,
-    shell: true,
-    bookId,
-    chapterId,
-    items: [],
-    apiBase: API_BASE,
-  });
+  return res.render("pages/watch", { meta, shell: true, code, ep, lang });
 });
 
 // ============================================================================
-// JSON API (SERVER -> UPSTREAM) — tidak pernah 500 hanya karena upstream 403
+// JSON API (server -> upstream)
 // ============================================================================
+
+app.get("/api/languages", async (req, res) => {
+  const cacheKey = "languages";
+  const cached = cacheGet(cacheKey);
+  if (cached) return res.status(200).json(cached);
+
+  const r = await safeApiGet(req, "/languages", {}, 30000);
+  if (!r.ok) return res.status(200).json({ data: [], error: r.error });
+
+  const payload = {
+    data: Array.isArray(r.data?.data) ? r.data.data : [],
+    cached: Boolean(r.data?.cached),
+    ttl: Number(r.data?.ttl || 0),
+  };
+
+  if (payload.ttl) cacheSet(cacheKey, payload, payload.ttl);
+  return res.status(200).json(payload);
+});
 
 app.get("/api/home", async (req, res) => {
-  const latestRaw = await safeApiGet(req, "/latest");
-  const trendingRaw = await safeApiGet(req, "/trending");
-  const foryouRaw = await safeApiGet(req, "/foryou");
-  const randomRaw = await safeApiGet(req, "/randomdrama");
+  const lang = String(req.query.lang || "en");
+  const cacheKey = `home:${lang}`;
 
-  const latest = normalizeList(latestRaw).map(normalizeCard);
-  const trending = normalizeList(trendingRaw).map(normalizeCard);
-  const foryou = normalizeList(foryouRaw).map(normalizeCard);
-  const random = normalizeList(randomRaw).map(normalizeCard);
+  const cached = cacheGet(cacheKey);
+  if (cached) return res.status(200).json(cached);
 
-  const featured = trending[0] || latest[0] || foryou[0] || random[0] || null;
+  const r = await safeApiGet(req, "/home", { lang }, 45000);
+  if (!r.ok) return res.status(200).json({ data: [], error: r.error });
 
-  return res.status(200).json({
-    featured,
-    latest,
-    trending,
-    foryou,
-    random,
-    upstream: {
-      latest: !!latestRaw,
-      trending: !!trendingRaw,
-      foryou: !!foryouRaw,
-      random: !!randomRaw,
-    },
-  });
-});
+  const list = Array.isArray(r.data?.data) ? r.data.data.map(normalizeShow) : [];
+  const payload = {
+    data: list,
+    featured: list[0] || null,
+    cached: Boolean(r.data?.cached),
+    ttl: Number(r.data?.ttl || 0),
+  };
 
-app.get("/api/browse", async (req, res) => {
-  const classify = String(req.query.classify || "terbaru");
-  const page = Number(req.query.page || 1);
-
-  const raw = await safeApiGet(req, "/dubindo", { classify, page });
-  const items = normalizeList(raw).map(normalizeCard);
-
-  return res.status(200).json({ classify, page, items });
-});
-
-app.get("/api/popular", async (req, res) => {
-  const raw = await safeApiGet(req, "/populersearch");
-  const list = normalizeList(raw);
-
-  const popular = list
-    .map((x) => {
-      if (typeof x === "string") return x;
-      return x?.keyword || x?.name || x?.title || x?.word || x?.query || "";
-    })
-    .filter(Boolean)
-    .slice(0, 12);
-
-  return res.status(200).json({ popular });
+  if (payload.ttl) cacheSet(cacheKey, payload, payload.ttl);
+  return res.status(200).json(payload);
 });
 
 app.get("/api/search", async (req, res) => {
   const q = String(req.query.q || "").trim();
-  if (!q) return res.status(200).json({ q: "", items: [] });
+  const lang = String(req.query.lang || "en");
+  if (!q) return res.status(200).json({ data: [], q: "", lang });
 
-  const raw = await safeApiGet(req, "/search", { query: q });
-  const items = normalizeList(raw).map(normalizeCard);
+  const cacheKey = `search:${lang}:${q.toLowerCase()}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return res.status(200).json(cached);
 
-  return res.status(200).json({ q, items });
+  const r = await safeApiGet(req, "/search", { q, lang }, 45000);
+  if (!r.ok) return res.status(200).json({ data: [], q, lang, error: r.error });
+
+  const list = Array.isArray(r.data?.data) ? r.data.data.map(normalizeShow) : [];
+  const payload = {
+    data: list,
+    q,
+    lang,
+    cached: Boolean(r.data?.cached),
+    ttl: Number(r.data?.ttl || 0),
+  };
+
+  if (payload.ttl) cacheSet(cacheKey, payload, payload.ttl);
+  return res.status(200).json(payload);
 });
 
-app.get("/api/detail", async (req, res) => {
-  const bookId = String(req.query.bookId || "");
-  if (!bookId) return res.status(400).json({ error: "missing_bookId" });
+app.get("/api/episodes/:code", async (req, res) => {
+  const code = String(req.params.code || "");
+  const lang = String(req.query.lang || "en");
+  if (!code) return res.status(400).json({ error: "missing_code" });
 
-  const rawDetail = await safeApiGet(req, "/detail", { bookId }, 60000);
+  const cacheKey = `eps:${lang}:${code}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return res.status(200).json(cached);
 
-  if (!rawDetail) {
-    return res.status(200).json({
-      detail: null,
-      episodes: [],
-      rawStatus: null,
-      message: "",
-      timestamp: null,
-    });
-  }
+  const r = await safeApiGet(req, `/episodes/${encodeURIComponent(code)}`, { lang }, 45000);
+  if (!r.ok) return res.status(200).json({ data: [], code, lang, error: r.error });
 
-  const detail = normalizeDetailFromApi(rawDetail);
-  const episodes = buildEpisodesFromDetail(rawDetail);
+  const list = Array.isArray(r.data?.data)
+    ? r.data.data.map((x) => ({
+        id: Number(x.id || 0),
+        episode: Number(x.episode || 0),
+        locked: Boolean(x.locked),
+      }))
+    : [];
 
-  return res.status(200).json({
-    detail,
-    episodes,
-    rawStatus: rawDetail?.status ?? null,
-    message: rawDetail?.message ?? "",
-    timestamp: rawDetail?.timestamp ?? null,
-  });
+  const payload = {
+    data: list,
+    code,
+    lang,
+    cached: Boolean(r.data?.cached),
+    ttl: Number(r.data?.ttl || 0),
+  };
+
+  if (payload.ttl) cacheSet(cacheKey, payload, payload.ttl);
+  return res.status(200).json(payload);
 });
 
-app.get("/api/sources", async (req, res) => {
-  const bookId = String(req.query.bookId || "");
-  const chapterId = String(req.query.chapterId || "");
-  if (!bookId || !chapterId)
-    return res.status(400).json({ error: "missing_params" });
+app.get("/api/play/:code", async (req, res) => {
+  const code = String(req.params.code || "");
+  const lang = String(req.query.lang || "en");
+  const ep = Number(req.query.ep || 1);
+  if (!code) return res.status(400).json({ error: "missing_code" });
 
-  const rawDetail = await safeApiGet(req, "/detail", { bookId }, 60000);
-  if (!rawDetail) return res.status(200).json({ bookId, chapterId, sources: [], best: "" });
+  // play URL cepat expired -> cache pendek mengikuti ttl/expires_in
+  const cacheKey = `play:${lang}:${code}:${ep}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return res.status(200).json(cached);
 
-  const eps = buildEpisodesFromDetail(rawDetail);
-  const ep = eps.find((x) => x.chapterId === chapterId);
-  if (!ep) return res.status(200).json({ bookId, chapterId, sources: [], best: "" });
+  const r = await safeApiGet(req, `/play/${encodeURIComponent(code)}`, { lang, ep }, 45000);
+  if (!r.ok) return res.status(200).json({ data: null, code, lang, ep, error: r.error });
 
-  const sources = [];
-  if (ep.mp4) sources.push({ type: "mp4", label: "MP4 720p", url: ep.mp4 });
-  if (ep.m3u8Flag && ep.m3u8Url)
-    sources.push({ type: "hls", label: "HLS 720p", url: ep.m3u8Url });
+  const d = r.data?.data || null;
+  const payload = {
+    data: d
+      ? {
+          id: Number(d.id || 0),
+          name: d.name || "",
+          episode: Number(d.episode || ep),
+          total: Number(d.total || 0),
+          video: d.video || {},
+          expires: Number(d.expires || 0),
+          expires_in: Number(d.expires_in || 0),
+        }
+      : null,
+    cached: Boolean(r.data?.cached),
+    ttl: Number(r.data?.ttl || 0),
+    code,
+    lang,
+    ep,
+  };
 
-  return res.status(200).json({
-    bookId,
-    chapterId,
-    unlock: ep.unlock,
-    best: ep.mp4 || ep.m3u8Url || "",
-    sources,
-  });
+  // cache: pakai ttl dari API, atau fallback ke min(expires_in, 120) biar gak stale
+  const ttlSec = payload.ttl || Math.min(120, Math.max(5, payload.data?.expires_in || 0));
+  cacheSet(cacheKey, payload, ttlSec);
+
+  return res.status(200).json(payload);
 });
 
 // ============================================================================
@@ -483,9 +419,6 @@ app.get("/api/sources", async (req, res) => {
 app.use((req, res) => {
   res.status(404).render("pages/404", {
     meta: baseMeta(req, { title: "404", path: req.path }),
-    items: [],
-    popular: [],
-    apiBase: API_BASE,
   });
 });
 
