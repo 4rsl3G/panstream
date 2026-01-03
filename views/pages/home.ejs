@@ -1,51 +1,172 @@
 <div class="max-w-7xl mx-auto px-4 sm:px-6 pt-10 pb-6">
-  <section class="pan-hero" data-aos="fade-up">
-    <% if (featured) { %>
-      <div class="pan-heroBg">
-        <img
-          src="<%= featured.cover || '/public/img/og.png' %>"
-          alt=""
-          onerror="this.onerror=null;this.src='/public/img/og.png';"
-        />
+  <!-- HERO (shell) -->
+  <section class="pan-hero" data-aos="fade-up" id="panHomeHero">
+    <div class="pan-heroCard">
+      <div class="tracking-[0.45em] uppercase text-xs opacity-70">PanStream</div>
+      <h1 class="pan-heroTitle mt-4">Loading…</h1>
+      <p class="pan-heroDesc mt-5">Sedang mengambil data dari server.</p>
+      <div class="pan-heroActions mt-7">
+        <a class="pan-btn pan-btnPrimary" href="/browse">
+          <i class="ri-compass-3-line"></i> Explore
+        </a>
+        <a class="pan-btn" href="/search">
+          <i class="ri-search-2-line"></i> Search
+        </a>
       </div>
-
-      <div class="pan-heroCard">
-        <div class="tracking-[0.45em] uppercase text-xs opacity-70">Featured</div>
-        <h1 class="pan-heroTitle mt-4"><%= featured.bookName %></h1>
-        <p class="pan-heroDesc mt-5"><%= (featured.introduction || '').slice(0, 210) %>...</p>
-
-        <div class="pan-heroActions mt-7">
-          <a class="pan-btn pan-btnPrimary" href="/detail/<%= featured.bookId %>">
-            <i class="ri-information-line"></i> Open Detail
-          </a>
-          <a class="pan-btn" href="/browse">
-            <i class="ri-compass-3-line"></i> Explore
-          </a>
-        </div>
-
-        <% if (featured.tags && featured.tags.length) { %>
-          <div class="pan-chipRow mt-7">
-            <% featured.tags.slice(0, 8).forEach(t => { %>
-              <span class="pan-chip"><%= t %></span>
-            <% }) %>
-          </div>
-        <% } %>
-      </div>
-    <% } else { %>
-      <div class="pan-heroCard">
-        <div class="tracking-[0.45em] uppercase text-xs opacity-70">PanStream</div>
-        <h1 class="pan-heroTitle mt-4">Luxury streaming interface</h1>
-        <p class="pan-heroDesc mt-5">API sedang tidak tersedia. Refresh halaman.</p>
-        <div class="pan-heroActions mt-7">
-          <a class="pan-btn pan-btnPrimary" href="/browse">Browse</a>
-          <a class="pan-btn" href="/search">Search</a>
-        </div>
-      </div>
-    <% } %>
+    </div>
   </section>
 
-  <%- include("../components/rail", { title: "Trending", items: trending, cta: { href: "/browse?classify=terbaru&page=1", label: "More" } }) %>
-  <%- include("../components/rail", { title: "Latest", items: latest, cta: { href: "/browse?classify=terbaru&page=1", label: "More" } }) %>
-  <%- include("../components/rail", { title: "For You", items: foryou }) %>
-  <%- include("../components/rail", { title: "Random", items: random }) %>
+  <!-- RAILS (shell) -->
+  <div id="panHomeRails">
+    <%- include("../components/rail", { title: "Trending", items: [], cta: { href: "/browse?classify=terbaru&page=1", label: "More" } }) %>
+    <%- include("../components/rail", { title: "Latest", items: [], cta: { href: "/browse?classify=terbaru&page=1", label: "More" } }) %>
+    <%- include("../components/rail", { title: "For You", items: [] }) %>
+    <%- include("../components/rail", { title: "Random", items: [] }) %>
+  </div>
 </div>
+
+<script>
+  // Mode B: fetch realtime home data, lalu render hero+rails
+  (function () {
+    const $loader = document.getElementById("panPageLoader");
+    const hero = document.getElementById("panHomeHero");
+    const rails = document.getElementById("panHomeRails");
+
+    const esc = (s) =>
+      String(s || "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+
+    function heroHTML(featured) {
+      if (!featured) {
+        return `
+          <div class="pan-heroCard">
+            <div class="tracking-[0.45em] uppercase text-xs opacity-70">PanStream</div>
+            <h1 class="pan-heroTitle mt-4">Luxury streaming interface</h1>
+            <p class="pan-heroDesc mt-5">API sedang tidak tersedia. Refresh halaman.</p>
+            <div class="pan-heroActions mt-7">
+              <a class="pan-btn pan-btnPrimary" href="/browse">Browse</a>
+              <a class="pan-btn" href="/search">Search</a>
+            </div>
+          </div>
+        `;
+      }
+
+      const cover = featured.cover || "/public/img/og.png";
+      const intro = (featured.introduction || "").slice(0, 210);
+      const tags = Array.isArray(featured.tags) ? featured.tags.slice(0, 8) : [];
+
+      return `
+        <div class="pan-heroBg">
+          <img
+            src="${esc(cover)}"
+            alt=""
+            onerror="this.onerror=null;this.src='/public/img/og.png';"
+          />
+        </div>
+
+        <div class="pan-heroCard">
+          <div class="tracking-[0.45em] uppercase text-xs opacity-70">Featured</div>
+          <h1 class="pan-heroTitle mt-4">${esc(featured.bookName || "")}</h1>
+          <p class="pan-heroDesc mt-5">${esc(intro)}${intro ? "..." : ""}</p>
+
+          <div class="pan-heroActions mt-7">
+            <a class="pan-btn pan-btnPrimary" href="/detail/${encodeURIComponent(featured.bookId || "")}">
+              <i class="ri-information-line"></i> Open Detail
+            </a>
+            <a class="pan-btn" href="/browse">
+              <i class="ri-compass-3-line"></i> Explore
+            </a>
+          </div>
+
+          ${
+            tags.length
+              ? `<div class="pan-chipRow mt-7">
+                   ${tags.map((t) => `<span class="pan-chip">${esc(t)}</span>`).join("")}
+                 </div>`
+              : ""
+          }
+        </div>
+      `;
+    }
+
+    // render rail pakai HTML yang kompatibel dengan CSS kamu (tanpa butuh component server)
+    function railHTML(title, items, cta) {
+      const list = Array.isArray(items) ? items : [];
+      const ctaHtml = cta?.href
+        ? `<a class="pan-btn pan-btnGhost" href="${esc(cta.href)}">${esc(cta.label || "More")}</a>`
+        : "";
+
+      return `
+        <section class="mt-10" data-aos="fade-up">
+          <div class="flex items-center justify-between gap-3 mb-4">
+            <h2 class="tracking-[0.28em] uppercase text-xs opacity-70">${esc(title)}</h2>
+            ${ctaHtml}
+          </div>
+
+          <div class="pan-rail">
+            ${
+              list.length
+                ? list
+                    .map((d) => {
+                      const cover = d.cover || "/public/img/og.png";
+                      return `
+                        <a href="/detail/${encodeURIComponent(d.bookId || "")}" class="pan-card">
+                          <div class="pan-poster">
+                            <img class="pan-img" loading="lazy"
+                              src="${esc(cover)}"
+                              alt="${esc(d.bookName || "")}"
+                              onerror="this.onerror=null;this.src='/public/img/og.png';"
+                            />
+                            <div class="pan-posterOverlay"></div>
+                          </div>
+                          <div style="margin-top:10px">
+                            <div style="font-size:12px;font-weight:600;line-height:1.35">${esc(d.bookName || "")}</div>
+                            <div style="font-size:11px;opacity:.65;margin-top:6px">${esc(d.playCount || "")}</div>
+                          </div>
+                        </a>
+                      `;
+                    })
+                    .join("")
+                : `
+                  <div class="pan-empty" style="width:100%">
+                    <div class="pan-emptySub">Loading…</div>
+                  </div>
+                `
+            }
+          </div>
+        </section>
+      `;
+    }
+
+    async function loadHome() {
+      try {
+        const res = await fetch("/api/home", { cache: "no-store" });
+        const json = await res.json();
+        if (!res.ok || json?.error) throw new Error(json?.error || "home_failed");
+
+        hero.innerHTML = heroHTML(json.featured);
+
+        rails.innerHTML = [
+          railHTML("Trending", json.trending, { href: "/browse?classify=terbaru&page=1", label: "More" }),
+          railHTML("Latest", json.latest, { href: "/browse?classify=terbaru&page=1", label: "More" }),
+          railHTML("For You", json.foryou),
+          railHTML("Random", json.random),
+        ].join("");
+
+        setTimeout(() => window.AOS && AOS.refresh(), 250);
+      } catch (e) {
+        console.error("HOME_FETCH_ERR:", e);
+        hero.innerHTML = heroHTML(null);
+        rails.innerHTML = "";
+      } finally {
+        // ✅ close overlay setelah data selesai (karena API lambat)
+        setTimeout(() => $loader && $loader.classList.add("is-hide"), 200);
+      }
+    }
+
+    loadHome();
+  })();
+</script>
