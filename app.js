@@ -280,20 +280,6 @@ async function fillMissingCovers(cards, limit = 12) {
   return cards;
 }
 
-// ---------- Render loading page (wait API) ----------
-function renderLoading(res, req, title = "Loading") {
-  const meta = baseMeta(req, {
-    title,
-    description: "Sedang mengambil data dari server. Mohon tunggu…",
-    path: req.path
-  });
-
-  return res.status(503).render("pages/loading", {
-    meta,
-    retryMs: 1200
-  });
-}
-
 // ---------- SEO robots + sitemap ----------
 app.get("/robots.txt", (req, res) => {
   const baseUrl = getBaseUrl(req);
